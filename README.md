@@ -37,7 +37,7 @@ Tipe internal provider tidak diekspos melalui kontrak API publik.
 - Kontak, chat, number check, presence, group, profile, webhook, dan media download.
 - Dashboard live pada `/dashboard`.
 - SQLite auth state untuk skala satu host, selain mode multi-file.
-- Session lease lock dengan owner token dan TTL.
+- Session lease SQLite untuk satu host dan Redis distributed lease untuk lintas host.
 - Outbound queue dengan pacing per session dan chat.
 - Streaming media ke object store tanpa wajib mengubahnya menjadi Base64.
 - Live E2E harness opt-in untuk akun dan perangkat milik sendiri.
@@ -183,16 +183,24 @@ OPEN_SRC_WA_BAILEYS_AUTH_STORE=multi-file
 OPEN_SRC_WA_BAILEYS_AUTH_DIR=./runtime/baileys-auth
 ```
 
-Mode SQLite:
+Mode SQLite auth dengan lease satu host:
 
 ```env
 OPEN_SRC_WA_BAILEYS_AUTH_STORE=sqlite
 OPEN_SRC_WA_BAILEYS_AUTH_DATABASE=./runtime/baileys-auth.sqlite
 OPEN_SRC_WA_SESSION_LEASE_DATABASE=./runtime/session-leases.sqlite
+OPEN_SRC_WA_SESSION_LEASE_REDIS_URL=
 OPEN_SRC_WA_SESSION_LEASE_TTL_MS=30000
 ```
 
-SQLite auth cocok untuk banyak session pada satu host. Deployment lintas server tetap membutuhkan database terpusat dan distributed lease adapter yang mendukung compare-and-set, TTL, owner token, serta fencing token. Baca `docs/AUTH_STORAGE.md`.
+Mode distributed lease lintas host:
+
+```env
+OPEN_SRC_WA_SESSION_LEASE_REDIS_URL=rediss://username:password@redis.example.com:6380/0
+OPEN_SRC_WA_SESSION_LEASE_TTL_MS=30000
+```
+
+SQLite auth cocok untuk banyak session pada satu host. Redis lease menggunakan owner token, TTL, atomic renew, dan atomic release. Deployment horizontal tetap membutuhkan auth storage terpusat, durable broker, external object storage, observability, serta fencing/idempotency pada resource downstream. Baca `docs/AUTH_STORAGE.md`.
 
 ## Outbound queue
 
@@ -243,7 +251,7 @@ Harness menunggu QR/pairing dan mengirim pesan unik. Harness tidak mengklaim rec
 GET /api/v1/live/native/status
 ```
 
-Koneksi tetap `BLOCKED`. Proyek tidak mengarang endpoint, framing, key, handshake, Noise, atau Signal constant. Baca `docs/NATIVE_PROVIDER_STATUS.md`.
+Koneksi tetap `BLOCKED` dan mengembalikan error resmi `NATIVE_PROTOCOL_BLOCKED`. Proyek tidak mengarang endpoint, framing, key, handshake, Noise, atau Signal constant. Baca `docs/NATIVE_PROVIDER_STATUS.md`.
 
 ## Validasi
 
@@ -256,6 +264,7 @@ pnpm build
 pnpm docs:check
 pnpm dependency:check
 pnpm license:check
+pnpm audit --audit-level high
 ```
 
 ## Docker
