@@ -1,6 +1,6 @@
 # Dependency Policy
 
-Bootstrap `0.1.0` memiliki **zero application dependency**. Runtime memakai Node.js standard library dan primitive OpenSSL yang disediakan Node.
+`opensrc_wa` menggunakan dependency sesedikit mungkin dan mengisolasi dependency provider live dari kontrak publik.
 
 Toolchain dikunci:
 
@@ -8,8 +8,28 @@ Toolchain dikunci:
 - pnpm `10.14.0`;
 - TypeScript `5.8.3`.
 
-Lint dan format bootstrap memakai pemeriksaan deterministik tanpa dependency registry. Integrasi ESLint dan Prettier resmi direncanakan setelah registry tersedia dan lockfile dapat dihasilkan serta diverifikasi.
+## Provider live yang diizinkan
 
-Dependency gateway siap pakai seperti Baileys, Venom Bot, `whatsapp-web.js`, WPPConnect, open-wa, atau browser automation tidak boleh ditambahkan sebagai dependency, wrapper, child process, container, test helper, atau fallback.
+- `@whiskeysockets/baileys` hanya boleh digunakan di `packages/provider-baileys` dan test adapter terkait.
+- Versi harus exact, bukan rentang semver.
+- Adapter tidak boleh mengekspor tipe internal Baileys sebagai API publik.
+- Pemanggilan provider harus melewati `WhatsAppProvider`.
+- Dependency harus melewati license review, vulnerability review, secret scan, dan automated test.
 
-Dependency baru wajib memiliki alasan, versi exact, lisensi, vulnerability review, dan bukti bahwa dependency tidak menyediakan konektivitas WhatsApp siap pakai.
+## Dependency yang tetap dilarang
+
+Venom Bot, `whatsapp-web.js`, WPPConnect, open-wa, fork gateway lain, wrapper tersembunyi, Puppeteer, Playwright, Selenium, Chromium automation, serta source code yang disalin dari proyek lain tidak boleh digunakan.
+
+## Aturan penambahan dependency
+
+Dependency baru wajib memiliki:
+
+1. alasan teknis;
+2. versi exact;
+3. lisensi yang kompatibel;
+4. vulnerability review;
+5. owner paket yang jelas;
+6. test untuk boundary adapter;
+7. dokumentasi fallback ketika dependency tidak tersedia.
+
+Runtime mock harus tetap dapat diuji tanpa koneksi WhatsApp live. Live E2E dinonaktifkan secara default pada CI publik.
