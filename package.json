@@ -1,8 +1,8 @@
 {
   "name": "opensrc_wa",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "Multi-provider unofficial WhatsApp gateway with deterministic mock runtime and an isolated Baileys live adapter.",
+  "description": "Multi-provider unofficial WhatsApp gateway with deterministic mock runtime, isolated Baileys live adapter, queued delivery, durable auth, and streaming media storage.",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.14.0",
   "engines": {
@@ -17,6 +17,7 @@
     "test": "node scripts/test.mjs",
     "test:unit": "node scripts/test.mjs unit",
     "test:integration": "node scripts/test.mjs integration",
+    "test:live": "node scripts/live-e2e.mjs",
     "start": "node dist/apps/gateway/src/index.js",
     "start:live": "node dist/apps/live-gateway/src/index.js",
     "dev": "node --experimental-strip-types apps/gateway/src/index.ts",
@@ -28,6 +29,7 @@
     "license:check": "node scripts/license-check.mjs"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc13"
+    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "qrcode": "1.5.4"
   }
 }
