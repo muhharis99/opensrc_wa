@@ -5,16 +5,16 @@
 ## Applications
 
 - `apps/gateway`: runtime mock, HTTP, WebSocket, auth, rate limit, routing, dan metrics.
-- `apps/live-gateway`: REST API live-provider pada port terpisah agar runtime mock tetap stabil.
+- `apps/live-gateway`: REST API dan dashboard live-provider pada port terpisah.
 - `apps/cli`: command-line client.
-- `apps/dashboard`: local no-CDN dashboard.
+- `apps/dashboard`: dashboard runtime mock.
 
 ## Provider boundary
 
-- `provider-contract`: kontrak netral `WhatsAppProvider` dan `ProviderManager`.
-- `provider-baileys`: adapter live Baileys yang diisolasi.
-- `mock`: behavior deterministik yang telah ada pada service internal.
-- `native`: jalur riset WebSocket/Noise/Signal masa depan.
+- `provider-contract`: `WhatsAppProvider`, `ProviderManager`, outbound pacing queue, dan session lease contract.
+- `provider-baileys`: adapter live terisolasi, SQLite auth state, dan SQLite session lease.
+- `provider-native`: boundary riset WebSocket/Noise/Signal yang menolak live operation tanpa bukti clean-room.
+- runtime mock: behavior deterministik yang telah ada pada service internal.
 
 Tipe internal provider tidak boleh keluar ke API publik. Event dan request harus dipetakan menjadi contract `opensrc_wa`.
 
@@ -26,30 +26,69 @@ Tipe internal provider tidak boleh keluar ke API publik. Event dan request harus
 - `crypto`: secure random, SHA-256, HMAC, HKDF, AES-256-GCM.
 - `auth`: pairing controller dan session manager mock.
 - `session-store`: encrypted file, SQLite, relational adapter contract.
+- `qr`: QR PNG/Base64/data URL rendering.
+- `object-store`: streaming object persistence contract dan local atomic implementation.
 
-## Feature runtime
+## Live provider lifecycle
 
-- `capabilities`: feature registry dan status.
-- `messaging`: message lifecycle dan advanced message operations mock.
-- `media`: encrypted mock media pipeline.
-- `domain`: contacts, chats, groups, presence, status, channels, communities, business, labels, calls, privacy, history.
-- `plugins`: safe in-process hooks.
-- `sdk`: typed gateway client.
+```text
+HTTP connect request
+       |
+ProviderManager.get(sessionId)
+       |
+SessionLeaseLock.acquire
+       |
+AuthState load (multi-file atau SQLite)
+       |
+BaileysProvider socket
+       |
+ProviderEvent -> session view -> webhook/dashboard
+```
 
-## Live provider runtime
+Session lease diperbarui periodik. Logout dan disconnect melepaskan lease serta menutup auth database handle. Proses kedua yang memakai session sama ditolak dengan `SESSION_LOCKED`.
 
-`apps/live-gateway` membuat satu provider instance per `sessionId` melalui `ProviderManager`. Credential setiap session disimpan terpisah di direktori auth provider. Adapter memetakan:
+## Outbound delivery
 
-- connection update dan QR;
-- pairing code;
-- credential update;
-- incoming message dan message update;
-- presence;
-- contact/chat update;
-- group participant dan metadata update;
-- call dan history event.
+```text
+REST message request
+       |
+validation
+       |
+PacedOutboundQueue
+  - partition: sessionId
+  - secondary delay: chatId
+  - bounded pending capacity
+       |
+WhatsAppProvider.send
+```
 
-Reconnect menggunakan exponential backoff dan berhenti pada logout, conflict, atau disconnect manual.
+Queue in-process menjaga urutan per session. Deployment multi-node harus menggantinya dengan durable broker yang mempertahankan partition key dan idempotency.
+
+## Media pipeline
+
+```text
+provider encrypted media
+       |
+downloadMediaMessage(stream)
+       |
+ObjectStore.put(stream)
+       |
+atomic local object + SHA-256 metadata
+       |
+authenticated streaming download
+```
+
+Local object store cocok untuk satu host. Horizontal scaling memerlukan S3-compatible storage atau backend object-store lain.
+
+## Interactive dan broadcast
+
+Buttons dan list dibuat pada adapter melalui provider low-level message generation, kemudian direlay. Keduanya diberi status `EXPERIMENTAL`. Broadcast mendukung JID broadcast/status yang sudah tersedia pada akun; repository tidak mengklaim pembuatan broadcast list baru.
+
+Delete-for-everyone memakai message revoke, sedangkan delete-for-me memakai chat modification lokal dengan message key dan timestamp.
+
+## Native provider
+
+`provider-native` memodelkan evidence gates untuk endpoint, handshake, Noise, dan Signal. Tanpa seluruh bukti, `connect()` menghasilkan `NATIVE_PROTOCOL_BLOCKED`. Tidak ada fallback native diam-diam dan tidak ada detail protokol yang dikarang.
 
 ## Integration packages
 
@@ -60,16 +99,18 @@ Reconnect menggunakan exponential backoff dan berhenti pada logout, conflict, at
 
 ## Data ownership
 
-Credential live hanya boleh berada di auth repository provider. Utility multi-file digunakan untuk bootstrap dan instalasi kecil. Untuk deployment besar, gunakan database-backed key repository, distributed locking, dan encryption at rest.
-
-Domain service mock versi 0.2 masih menggunakan in-memory state. Production persistence tetap menjadi adapter repository terpisah.
+- QR dan pairing code hanya berada pada memory session view dan tidak boleh dilog.
+- Credential live berada pada auth repository provider.
+- SQLite auth database dan local object store berada di `runtime` serta tidak boleh di-commit.
+- API key disimpan sebagai SHA-256 digest.
+- Dashboard hanya menyimpan API key di browser `sessionStorage`.
 
 ## Security boundary
 
-- API key wajib untuk seluruh endpoint live selain health/readiness.
-- Live gateway memakai rate limit terpisah.
-- QR, pairing code, auth keys, raw message, dan media tidak boleh ditulis ke log publik.
+- API key wajib untuk endpoint live selain health/readiness/dashboard shell.
+- QR PNG endpoint tetap membutuhkan API key.
+- Live gateway memakai HTTP rate limit dan outbound pacing terpisah.
 - Webhook memakai HMAC, retry terbatas, dan dead-letter history.
-- Provider live hanya digunakan untuk akun/perangkat sendiri dan penerima yang memberikan persetujuan.
+- Provider digunakan hanya untuk akun/perangkat sendiri dan penerima yang memberikan persetujuan.
 
-Lihat `docs/adr/0001-multi-provider-baileys.md`.
+Lihat `docs/adr/0001-multi-provider-baileys.md`, `docs/AUTH_STORAGE.md`, `docs/OUTBOUND_QUEUE.md`, dan `docs/OBJECT_STORAGE.md`.
