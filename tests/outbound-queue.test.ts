@@ -14,9 +14,18 @@ test("outbound queue serializes a session and applies chat pacing", async () => 
 
 test("outbound queue rejects work above capacity", async () => {
   const queue = new PacedOutboundQueue({ sessionIntervalMs: 0, chatIntervalMs: 0, maxPending: 1 });
-  let release: (() => void) | undefined;
-  const blocked = queue.enqueue("s1", "chat-a", () => new Promise<string>((resolve) => { release = () => resolve("ok"); }));
+  let release!: () => void;
+  let signalStarted!: () => void;
+  const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+
+  const blocked = queue.enqueue("s1", "chat-a", () => new Promise<string>((resolve) => {
+    release = () => resolve("ok");
+    signalStarted();
+  }));
+
+  await started;
   assert.throws(() => queue.enqueue("s2", "chat-b", async () => "overflow"), /OUTBOUND_QUEUE_FULL/);
-  release?.();
+  release();
   assert.equal(await blocked, "ok");
+  assert.equal(queue.stats().pending, 0);
 });
