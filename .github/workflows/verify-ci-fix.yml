@@ -1,0 +1,95 @@
+name: Verify CI fix
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: verify-opensrc-wa-ci-fix
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.event.issue.user.login == github.repository_owner && github.event.issue.title == 'verify opensrc_wa ci fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+
+      - name: Run strict validation and Docker build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          report_failure() {
+            status=$?
+            {
+              echo "Strict CI verification failed with exit code ${status}."
+              echo '```text'
+              tail -n 240 /tmp/verify-ci.log 2>/dev/null || true
+              echo '```'
+            } > /tmp/failure-comment.md
+            gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/failure-comment.md || true
+            exit "$status"
+          }
+          trap report_failure ERR
+
+          exec > >(tee /tmp/verify-ci.log) 2>&1
+
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          npm install --global typescript@5.8.3
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm format:check
+          pnpm typecheck
+          pnpm test
+          pnpm docs:check
+          pnpm dependency:check
+          pnpm license:check
+          pnpm audit --audit-level high
+          pnpm build
+          cp .env.example .env
+          docker compose config --quiet
+          docker build --tag opensrc-wa:v0.4.0 .
+
+          test_count=$(grep '^# tests ' /tmp/verify-ci.log | tail -n 1 | awk '{print $3}')
+          test_count=${test_count:-unknown}
+          cat > docs/VALIDATION_V040.md <<EOF
+          # opensrc_wa v0.4.0 Validation Evidence
+
+          Strict validation source commit: \`${GITHUB_SHA}\`
+
+          The following checks passed independently with immediate failure propagation on GitHub-hosted Ubuntu:
+
+          - frozen dependency installation with pnpm 10.14.0;
+          - lint and format checks;
+          - strict TypeScript type-check;
+          - automated test suite (reported tests: ${test_count});
+          - documentation policy checks;
+          - dependency-boundary checks;
+          - license checks;
+          - high-severity dependency audit;
+          - TypeScript production build;
+          - Docker Compose configuration validation;
+          - Docker image build for \`opensrc-wa:v0.4.0\`.
+
+          Live WhatsApp E2E was not executed because it requires a user-owned account and device. Native WebSocket/Noise/Signal connectivity remains \`BLOCKED\` and was not fabricated.
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/VALIDATION_V040.md
+          git commit -m "ci: record strict v0.4.0 validation" || true
+          git push origin HEAD:main
+          gh issue close "${{ github.event.issue.number }}" --comment "Strict CI verification passed: validate, audit, build, Docker Compose, and Docker image build all succeeded."
