@@ -1,4 +1,4 @@
-# Live Gateway API
+# Live Gateway API v0.4.0
 
 Base URL default:
 
@@ -6,52 +6,18 @@ Base URL default:
 http://localhost:3001
 ```
 
-Semua endpoint `/api/v1/live/*` membutuhkan:
+Semua endpoint `/api/v1/live/*` membutuhkan `X-API-Key`. Dashboard tersedia pada `/dashboard` dan meminta API key di browser.
 
-```text
-X-API-Key: API_KEY_ASLI
-Content-Type: application/json
-```
-
-## Response envelope
-
-Berhasil:
-
-```json
-{
-  "success": true,
-  "data": {},
-  "error": null,
-  "meta": {
-    "request_id": "uuid",
-    "timestamp": "ISO-8601"
-  }
-}
-```
-
-Gagal:
-
-```json
-{
-  "success": false,
-  "data": null,
-  "error": {
-    "code": "LIVE_PROVIDER_ERROR",
-    "message": "Penjelasan error"
-  },
-  "meta": {
-    "request_id": "uuid",
-    "timestamp": "ISO-8601"
-  }
-}
-```
-
-## Health
+## Health dan runtime
 
 ```text
 GET /health
 GET /ready
+GET /api/v1/live/queue
+GET /api/v1/live/native/status
 ```
+
+`/api/v1/live/native/status` tetap `BLOCKED` sampai riset clean-room menyediakan bukti endpoint, framing, Noise, Signal, pairing, dan live E2E.
 
 ## Session
 
@@ -64,13 +30,13 @@ POST /api/v1/live/sessions/{sessionId}/disconnect
 POST /api/v1/live/sessions/{sessionId}/logout
 ```
 
-Connect dengan QR:
+Connect QR:
 
 ```json
 {}
 ```
 
-Connect dengan pairing code:
+Connect pairing code:
 
 ```json
 {
@@ -79,23 +45,27 @@ Connect dengan pairing code:
 }
 ```
 
-Status session dapat mengandung:
+## QR PNG, Base64, dan data URL
+
+```text
+GET /api/v1/live/sessions/{sessionId}/qr
+GET /api/v1/live/sessions/{sessionId}/qr.png
+```
+
+Response JSON QR:
 
 ```json
 {
-  "sessionId": "utama",
-  "state": "awaiting_pairing",
-  "qr": "provider-qr-payload",
-  "pairingCode": null,
-  "phone": null,
-  "updatedAt": "ISO-8601",
-  "lastError": null
+  "session_id": "utama",
+  "payload": "provider-qr-payload",
+  "base64": "iVBORw0KGgo...",
+  "data_url": "data:image/png;base64,iVBORw0KGgo..."
 }
 ```
 
-Nilai QR adalah payload provider, bukan gambar. Frontend dapat merendernya dengan QR encoder milik aplikasi. Jangan menyimpan atau mencatat payload QR ke log publik.
+QR adalah credential sementara. Jangan menyimpannya ke log, issue, screenshot publik, analytics, atau layanan pihak ketiga.
 
-## Pesan
+## Mengirim pesan
 
 ```text
 POST /api/v1/live/sessions/{sessionId}/messages
@@ -115,7 +85,7 @@ POST /api/v1/live/sessions/{sessionId}/messages
 
 ### Media
 
-`kind` dapat berupa `image`, `video`, `audio`, `document`, atau `sticker`.
+`kind`: `image`, `video`, `audio`, `document`, atau `sticker`.
 
 ```json
 {
@@ -130,105 +100,89 @@ POST /api/v1/live/sessions/{sessionId}/messages
 }
 ```
 
-Sumber media mendukung satu dari:
+Media mendukung `base64`, `url`, atau `filePath`.
 
-```json
-{"base64":"..."}
-```
+### Buttons
 
-```json
-{"url":"https://example.com/file"}
-```
-
-```json
-{"filePath":"/app/runtime/uploads/file.jpg"}
-```
-
-Untuk audio voice note:
+Status provider: `EXPERIMENTAL`, karena kemampuan interactive message dapat berubah pada versi WhatsApp/Baileys.
 
 ```json
 {
-  "kind": "audio",
+  "kind": "buttons",
   "to": "6281234567890@s.whatsapp.net",
-  "voice_note": true,
-  "media": {
-    "filePath": "/app/runtime/uploads/note.ogg",
-    "mimeType": "audio/ogg; codecs=opus"
-  }
+  "text": "Pilih tindakan",
+  "footer": "opensrc_wa",
+  "buttons": [
+    {"id":"yes","text":"Ya"},
+    {"id":"no","text":"Tidak"}
+  ]
 }
 ```
 
-### Lokasi
+Maksimal tiga tombol.
+
+### List
+
+Status provider: `EXPERIMENTAL`.
 
 ```json
 {
-  "kind": "location",
+  "kind": "list",
   "to": "6281234567890@s.whatsapp.net",
-  "latitude": -7.5666,
-  "longitude": 110.8167,
-  "name": "Surakarta",
-  "address": "Jawa Tengah"
+  "title": "Menu",
+  "text": "Silakan pilih",
+  "footer": "opensrc_wa",
+  "button_text": "Buka menu",
+  "sections": [
+    {
+      "title": "Layanan",
+      "rows": [
+        {"id":"help","title":"Bantuan","description":"Hubungi petugas"}
+      ]
+    }
+  ]
 }
 ```
 
-### Kontak
+Maksimal 10 section dan 100 row keseluruhan.
+
+### Native broadcast list / status broadcast
+
+WhatsApp Web tidak menyediakan pembuatan broadcast list baru, tetapi provider dapat mengirim ke broadcast JID yang sudah ada dan membaca informasinya.
 
 ```json
 {
-  "kind": "contact",
-  "to": "6281234567890@s.whatsapp.net",
-  "display_name": "Contoh Kontak",
-  "vcard": "BEGIN:VCARD\nVERSION:3.0\nFN:Contoh Kontak\nTEL;TYPE=CELL:+628111111111\nEND:VCARD"
+  "kind": "broadcast",
+  "to": "12345678@broadcast",
+  "text": "Pengumuman untuk penerima yang telah menyetujui"
 }
 ```
 
-### Poll
+Status broadcast:
 
 ```json
 {
-  "kind": "poll",
-  "to": "120000000000000000@g.us",
-  "question": "Pilih jadwal",
-  "options": ["Senin", "Selasa"],
-  "selectable_count": 1
+  "kind": "broadcast",
+  "to": "status@broadcast",
+  "text": "Status pengujian",
+  "status_jid_list": ["6281234567890@s.whatsapp.net"]
 }
 ```
 
-### Reaction
+Informasi list:
 
-```json
-{
-  "kind": "reaction",
-  "to": "6281234567890@s.whatsapp.net",
-  "emoji": "👍",
-  "key": {
-    "remoteJid": "6281234567890@s.whatsapp.net",
-    "id": "MESSAGE_ID",
-    "fromMe": false
-  }
-}
+```text
+GET /api/v1/live/sessions/{sessionId}/broadcasts/{broadcastJid}
 ```
 
-### Edit
+Jangan menggunakan broadcast untuk bulk messaging tanpa izin.
 
-```json
-{
-  "kind": "edit",
-  "to": "6281234567890@s.whatsapp.net",
-  "text": "Teks yang diperbarui",
-  "key": {
-    "remoteJid": "6281234567890@s.whatsapp.net",
-    "id": "MESSAGE_ID",
-    "fromMe": true
-  }
-}
-```
-
-### Delete
+### Delete for everyone
 
 ```json
 {
   "kind": "delete",
+  "scope": "everyone",
   "to": "6281234567890@s.whatsapp.net",
   "key": {
     "remoteJid": "6281234567890@s.whatsapp.net",
@@ -238,166 +192,115 @@ Untuk audio voice note:
 }
 ```
 
-### Forward
+### Delete for me
 
 ```json
 {
-  "kind": "forward",
+  "kind": "delete",
+  "scope": "me",
+  "timestamp": 1710000000,
+  "delete_media": true,
   "to": "6281234567890@s.whatsapp.net",
+  "key": {
+    "remoteJid": "6281234567890@s.whatsapp.net",
+    "id": "MESSAGE_ID",
+    "fromMe": true
+  }
+}
+```
+
+`delete-for-me` memakai `chatModify` dan memerlukan timestamp pesan.
+
+### Jenis lain
+
+`location`, `contact`, `poll`, `reaction`, `edit`, dan `forward` tetap tersedia seperti versi sebelumnya.
+
+## Download media
+
+Kompatibilitas Base64:
+
+```json
+{
   "message": {}
 }
 ```
 
-## Media masuk
+Streaming ke object store:
+
+```json
+{
+  "message": {},
+  "storage": "object",
+  "content_type": "image/jpeg",
+  "file_name": "foto.jpg"
+}
+```
+
+Endpoint:
 
 ```text
 POST /api/v1/live/sessions/{sessionId}/media/download
+GET  /api/v1/live/objects/{objectId}
 ```
 
-```json
-{
-  "message": {}
-}
-```
+Object download membutuhkan API key.
 
-Response:
-
-```json
-{
-  "base64": "...",
-  "size": 1024
-}
-```
-
-## Kontak dan chat
+## Kontak, chat, nomor, presence, grup, dan profil
 
 ```text
 GET  /api/v1/live/sessions/{sessionId}/contacts
 GET  /api/v1/live/sessions/{sessionId}/chats
 POST /api/v1/live/sessions/{sessionId}/numbers/check
 POST /api/v1/live/sessions/{sessionId}/contacts/block
-```
-
-Cek nomor:
-
-```json
-{
-  "numbers": ["6281234567890", "6281111111111"]
-}
-```
-
-Block atau unblock:
-
-```json
-{
-  "jid": "6281234567890@s.whatsapp.net",
-  "action": "block"
-}
-```
-
-## Presence
-
-```text
 POST /api/v1/live/sessions/{sessionId}/presence
-```
-
-```json
-{
-  "state": "composing",
-  "jid": "6281234567890@s.whatsapp.net"
-}
-```
-
-State: `available`, `unavailable`, `composing`, `recording`, atau `paused`.
-
-## Grup
-
-```text
 POST /api/v1/live/sessions/{sessionId}/groups
-```
-
-Buat grup:
-
-```json
-{
-  "operation": "create",
-  "subject": "Tim",
-  "participants": ["6281234567890@s.whatsapp.net"]
-}
-```
-
-Kelola peserta:
-
-```json
-{
-  "operation": "participants",
-  "group_jid": "120000000000000000@g.us",
-  "participants": ["6281234567890@s.whatsapp.net"],
-  "action": "add"
-}
-```
-
-Action peserta: `add`, `remove`, `promote`, atau `demote`.
-
-Operasi lain:
-
-- `subject` dengan `group_jid` dan `value`;
-- `description` dengan `group_jid` dan `value`;
-- `setting` dengan `group_jid` dan `setting`;
-- `invite` dengan `group_jid`;
-- `revoke-invite` dengan `group_jid`;
-- `accept-invite` dengan `code`.
-
-## Profil
-
-```text
 POST /api/v1/live/sessions/{sessionId}/profile
 ```
 
-Nama:
+## Queue
 
-```json
-{"operation":"name","value":"Nama Baru"}
+Semua send melewati queue per session dan chat. `OUTBOUND_QUEUE_FULL` menghasilkan HTTP `429`. Statistik tersedia pada:
+
+```text
+GET /api/v1/live/queue
 ```
 
-Status:
+## Auth database dan lock
 
-```json
-{"operation":"status","value":"Sedang bekerja"}
+Mode auth:
+
+```env
+OPEN_SRC_WA_BAILEYS_AUTH_STORE=multi-file
 ```
 
-Foto:
+atau:
 
-```json
-{
-  "operation": "picture",
-  "jid": "6281234567890@s.whatsapp.net",
-  "base64": "..."
-}
+```env
+OPEN_SRC_WA_BAILEYS_AUTH_STORE=sqlite
+OPEN_SRC_WA_BAILEYS_AUTH_DATABASE=./runtime/baileys-auth.sqlite
 ```
+
+Session lock:
+
+```env
+OPEN_SRC_WA_SESSION_LEASE_DATABASE=./runtime/session-leases.sqlite
+OPEN_SRC_WA_SESSION_LEASE_TTL_MS=30000
+```
+
+Session yang sedang dimiliki proses lain menghasilkan HTTP `409` dengan code `SESSION_LOCKED`.
 
 ## Webhook
 
-Set URL dan secret melalui environment. Event provider seperti connection, QR, message, presence, group, contact, chat, call, dan history diteruskan menggunakan HMAC signature.
+Event connection, QR, message, presence, group, contact, chat, call, history, dan provider error diteruskan ke webhook HMAC jika dikonfigurasi.
 
 ```text
 GET /api/v1/live/webhooks/history
 ```
 
-## Error dan retry
+## Dashboard
 
-- Error autentikasi menghasilkan HTTP `401`.
-- Rate limit menghasilkan HTTP `429`.
-- Error provider atau validasi saat ini menghasilkan HTTP `400` dengan code `LIVE_PROVIDER_ERROR`.
-- Auto reconnect hanya dilakukan untuk disconnect retryable.
-- Logout, conflict, dan disconnect manual tidak memicu reconnect.
+```text
+GET /dashboard
+```
 
-## Batasan v0.3.0
-
-- QR masih berupa payload, belum PNG/Base64 image.
-- Buttons dan list message belum distabilkan.
-- WhatsApp broadcast-list native belum diimplementasikan; contoh broadcast menggunakan pengiriman bertahap kepada penerima yang memberikan persetujuan.
-- Delete-for-me belum dibedakan sebagai operasi provider tersendiri.
-- Dashboard live khusus belum tersedia.
-- Live E2E belum diklaim lulus.
-- Auth database, distributed lock, outbound queue, dan streaming object storage masih backlog produksi.
+Dashboard menampilkan health, daftar session, status, QR PNG, pairing code, connect, disconnect, dan logout. API key hanya disimpan di `sessionStorage` browser.
