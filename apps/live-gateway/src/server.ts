@@ -134,7 +134,8 @@ export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime
           const input = await body();
           const state = requiredString(input.state, "state") as "available" | "unavailable" | "composing" | "recording" | "paused";
           if (!["available", "unavailable", "composing", "recording", "paused"].includes(state)) throw new Error("state presence tidak valid");
-          await providers.get(sessionId).setPresence(state, optionalString(input.jid));
+          const jid = optionalString(input.jid);
+          await providers.get(sessionId).setPresence(state, jid ?? undefined);
           return success(response, 200, requestId, { updated: true });
         }
         if (action === "groups" && method === "POST") {
