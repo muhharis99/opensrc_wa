@@ -1,8 +1,8 @@
 {
   "name": "opensrc_wa",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Clean-room WhatsApp Web interoperability research platform with broad mock feature parity, secure gateway APIs, and honest live-protocol blockers.",
+  "description": "Multi-provider unofficial WhatsApp gateway with deterministic mock runtime and an isolated Baileys live adapter.",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.14.0",
   "engines": {
@@ -18,11 +18,16 @@
     "test:unit": "node scripts/test.mjs unit",
     "test:integration": "node scripts/test.mjs integration",
     "start": "node dist/apps/gateway/src/index.js",
+    "start:live": "node dist/apps/live-gateway/src/index.js",
     "dev": "node --experimental-strip-types apps/gateway/src/index.ts",
+    "dev:live": "node --experimental-strip-types apps/live-gateway/src/index.ts",
     "cli": "node dist/apps/cli/src/index.js",
     "docs:check": "node scripts/docs-check.mjs",
     "dependency:check": "node scripts/dependency-check.mjs",
     "validate": "npm run lint && npm run format:check && npm run typecheck && npm run test && npm run docs:check && npm run dependency:check && npm run license:check",
     "license:check": "node scripts/license-check.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc13"
   }
 }
