@@ -1,28 +1,34 @@
 # Testing
 
-Jalankan:
+## Automated suite
 
 ```bash
 pnpm test
 ```
 
-Suite versi 0.2 mencakup 30 pengujian:
+Suite mencakup:
 
-- state machine;
-- codec dan malformed input;
-- cryptography;
-- encrypted file dan SQLite stores;
-- idempotency dan deduplication;
-- redaction dan rate limiting;
-- webhook signing;
-- capability registry;
-- advanced messaging;
-- media pipeline;
-- contacts, chats, groups, presence, status, channels, communities;
-- business catalog, labels, calls, privacy, history;
-- session snapshot;
-- plugin hooks dan SDK;
-- gateway lifecycle dan feature-parity integration.
+- state machine, retry, idempotency, deduplication, dan validation;
+- codec, malformed input, cryptography, encrypted file store, dan SQLite store;
+- messaging, media, contacts, chats, groups, presence, status, channels, communities, catalog, labels, calls, privacy, dan history;
+- API authentication, rate limiting, webhook signing, SDK, plugin hooks, dan gateway integration;
+- Baileys provider boundary menggunakan fake module tanpa koneksi live;
+- QR PNG/Base64/data URL;
+- SQLite provider auth credentials dan key state;
+- session lease acquire, renew, conflict, dan release;
+- outbound queue capacity dan pacing;
+- streaming local object store dan integrity metadata;
+- buttons, list, broadcast, delete-for-me, serta delete-for-everyone mapping;
+- native-provider blocker yang memastikan detail protokol tidak dikarang.
+
+Jalankan validasi penuh:
+
+```bash
+pnpm validate
+pnpm build
+```
+
+## Live E2E
 
 Live E2E tidak berjalan pada CI publik:
 
@@ -30,4 +36,15 @@ Live E2E tidak berjalan pada CI publik:
 ENABLE_LIVE_E2E=false
 ```
 
-Status `LIVE_TESTED` tidak boleh digunakan berdasarkan mock, fixture, interface, atau unit test.
+Pengujian manual hanya boleh menggunakan akun, perangkat, dan penerima milik sendiri atau yang telah memberi izin:
+
+```bash
+ENABLE_LIVE_E2E=true \
+LIVE_E2E_API_KEY=... \
+LIVE_E2E_RECIPIENT=628xxxxxxxxxx@s.whatsapp.net \
+pnpm test:live
+```
+
+Baca `docs/LIVE_E2E.md` sebelum menjalankan. Harness dapat membuktikan connect dan send apabila provider mengembalikan message ID. Receive, delivered, dan read harus memiliki bukti terpisah dari webhook atau perangkat pengujian.
+
+Status `LIVE_TESTED` tidak boleh digunakan berdasarkan mock, fixture, interface, fake provider, unit test, atau keberhasilan TypeScript build.
