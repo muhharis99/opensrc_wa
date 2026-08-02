@@ -3,14 +3,23 @@ import fsp = require("node:fs/promises");
 import path = require("node:path");
 import { DatabaseSync } from "node:sqlite";
 import type { SessionLeaseHandle, SessionLeaseLock } from "../../provider-contract/src/lease-lock";
+import { RedisSessionLeaseLock } from "./redis-lease-lock";
 
+/**
+ * Compatibility facade used by the live gateway. A filesystem path selects
+ * SQLite single-host leasing; a redis:// or rediss:// URL selects the Redis
+ * distributed lease implementation.
+ */
 export class SqliteSessionLeaseLock implements SessionLeaseLock {
-  public constructor(private readonly databasePath: string) {}
+  public constructor(private readonly databasePathOrRedisUrl: string) {}
 
   public async acquire(sessionId: string, ttlMs: number): Promise<SessionLeaseHandle> {
+    if (/^rediss?:\/\//i.test(this.databasePathOrRedisUrl)) {
+      return new RedisSessionLeaseLock({ url: this.databasePathOrRedisUrl }).acquire(sessionId, ttlMs);
+    }
     if (!Number.isInteger(ttlMs) || ttlMs < 5_000) throw new Error("ttlMs minimal 5000");
-    await fsp.mkdir(path.dirname(this.databasePath), { recursive: true, mode: 0o700 });
-    const database = new DatabaseSync(this.databasePath);
+    await fsp.mkdir(path.dirname(this.databasePathOrRedisUrl), { recursive: true, mode: 0o700 });
+    const database = new DatabaseSync(this.databasePathOrRedisUrl);
     database.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;");
     database.exec(`
       CREATE TABLE IF NOT EXISTS provider_session_leases (
@@ -36,9 +45,7 @@ export class SqliteSessionLeaseLock implements SessionLeaseLock {
     try {
       const current = select.get(sessionId) as { owner_id?: string; expires_at?: number } | undefined;
       const now = Date.now();
-      if (current?.owner_id && Number(current.expires_at) > now) {
-        throw new Error(`SESSION_LOCKED:${sessionId}`);
-      }
+      if (current?.owner_id && Number(current.expires_at) > now) throw new Error(`SESSION_LOCKED:${sessionId}`);
       upsert.run(sessionId, ownerId, now + ttlMs, new Date().toISOString());
       database.exec("COMMIT");
     } catch (error) {
