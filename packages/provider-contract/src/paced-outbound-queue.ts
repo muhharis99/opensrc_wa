@@ -38,13 +38,15 @@ export class PacedOutboundQueue {
       return task();
     });
 
-    const chain = run.then(() => undefined, () => undefined).finally(() => {
+    let chain!: Promise<void>;
+    const result = run.finally(() => {
       this.pending -= 1;
       if (this.sessionChains.get(sessionId) === chain) this.sessionChains.delete(sessionId);
       this.prune();
     });
+    chain = result.then(() => undefined, () => undefined);
     this.sessionChains.set(sessionId, chain);
-    return run;
+    return result;
   }
 
   public stats(): PacedOutboundQueueStats {
