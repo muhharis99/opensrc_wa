@@ -1,13 +1,14 @@
 # opensrc_wa v0.4.0 Validation Evidence
 
-Validation source commit: `633ce3af028934811ae4f2c3e3f679203e9f4f73`
+Validation source commit: `1d0e2754849036724992cbd131907471d6232ee7`
 
 The following checks passed on GitHub-hosted Ubuntu:
 
-- locked dependency generation and frozen installation with pnpm 10.14.0;
+- frozen dependency installation with pnpm 10.14.0;
 - lint and format checks;
 - strict TypeScript type-check;
-- automated test suite (reported tests: 40);
+- automated test suite (reported tests: 41);
+- QR, SQLite auth, SQLite lease, Redis distributed lease, queue, object-store, interactive-message, broadcast, delete-scope, and native-blocker tests;
 - documentation policy checks;
 - dependency-boundary checks;
 - license checks;
