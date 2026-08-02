@@ -1,10 +1,33 @@
 # Testing
 
+Jalankan:
+
 ```bash
-pnpm typecheck
 pnpm test
 ```
 
-Coverage perilaku mencakup state transition, frame boundary, malformed input, AES-GCM, atomic encrypted storage, SQLite transaction, HMAC verification, redaction, number masking, idempotency, deduplication, API authentication, dan mock lifecycle.
+Suite versi 0.2 mencakup 30 pengujian:
 
-Live E2E hanya boleh manual dengan akun/perangkat sendiri dan `ENABLE_LIVE_E2E=true`. Live E2E tidak boleh berjalan di CI publik.
+- state machine;
+- codec dan malformed input;
+- cryptography;
+- encrypted file dan SQLite stores;
+- idempotency dan deduplication;
+- redaction dan rate limiting;
+- webhook signing;
+- capability registry;
+- advanced messaging;
+- media pipeline;
+- contacts, chats, groups, presence, status, channels, communities;
+- business catalog, labels, calls, privacy, history;
+- session snapshot;
+- plugin hooks dan SDK;
+- gateway lifecycle dan feature-parity integration.
+
+Live E2E tidak berjalan pada CI publik:
+
+```env
+ENABLE_LIVE_E2E=false
+```
+
+Status `LIVE_TESTED` tidak boleh digunakan berdasarkan mock, fixture, interface, atau unit test.

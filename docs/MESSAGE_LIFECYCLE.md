@@ -1,13 +1,32 @@
 # Message Lifecycle
 
-## Mock outbound
+## Outbound mock
 
-1. Request divalidasi.
-2. Session harus `READY`.
-3. Idempotency key diperiksa.
-4. Message ID UUID dibuat.
-5. Duplicate window memverifikasi event baru.
-6. Record berstatus `sent` disimpan pada memory runtime.
-7. Event `message.sent` dikirim ke WebSocket dan webhook.
+1. Validasi session `READY`.
+2. Validasi recipient/JID.
+3. Periksa block dan consent revoke.
+4. Periksa idempotency key.
+5. Bentuk message record dan chat ID.
+6. Simpan pada runtime memory.
+7. Emit `message.sent`.
+8. Delivery/read/played receipt dapat diperbarui secara eksplisit.
 
-Isi pesan tidak masuk structured log. Persistence message production dan receipt live belum tersedia.
+Operasi lanjutan:
+
+- reply/quote;
+- forward;
+- reaction;
+- edit;
+- delete self/everyone;
+- poll;
+- location;
+- contact card;
+- media reference.
+
+## Incoming mock
+
+`POST /api/v1/messages/mock-incoming` membuat record incoming, melakukan deduplication, memperbarui unread chat, dan emit `message.received`.
+
+## Live
+
+Outbound dan inbound live tetap `BLOCKED`. Mock record tidak boleh dianggap sebagai receipt atau delivery dari jaringan live.

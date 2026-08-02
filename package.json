@@ -1,8 +1,8 @@
 {
   "name": "opensrc_wa",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Clean-room WhatsApp Web interoperability research foundation with a safe mock runtime.",
+  "description": "Clean-room WhatsApp Web interoperability research platform with broad mock feature parity, secure gateway APIs, and honest live-protocol blockers.",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.14.0",
   "engines": {

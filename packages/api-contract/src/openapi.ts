@@ -1,41 +1,102 @@
+const response = (description: string) => ({ description });
+const standard = (description: string) => ({ responses: { "200": response(description), "4XX": response("Client error"), "5XX": response("Server error") } });
+const created = (description: string) => ({ responses: { "201": response(description), "4XX": response("Client error") } });
+const accepted = (description: string) => ({ responses: { "202": response(description), "4XX": response("Client error") } });
+
 export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "opensrc_wa Gateway API",
-    version: "0.1.0",
-    description: "Safe mock-first clean-room interoperability research gateway. Live WhatsApp protocol connectivity is BLOCKED until validated."
+    version: "0.2.0",
+    description: "Clean-room, mock-first interoperability gateway with feature-parity contracts. Live WhatsApp protocol connectivity remains BLOCKED until independently validated."
   },
   servers: [{ url: "http://localhost:3000" }],
   components: {
-    securitySchemes: {
-      ApiKeyAuth: { type: "apiKey", in: "header", name: "X-API-Key" }
+    securitySchemes: { ApiKeyAuth: { type: "apiKey", in: "header", name: "X-API-Key" } },
+    schemas: {
+      ApiEnvelope: { type: "object", required: ["success", "data", "error", "meta"] },
+      CapabilityStatus: { type: "string", enum: ["IMPLEMENTED", "TESTED_WITH_UNIT", "TESTED_WITH_MOCK", "TESTED_WITH_FIXTURE", "LIVE_TESTED", "EXPERIMENTAL", "BLOCKED", "NOT_STARTED"] }
     }
   },
   security: [{ ApiKeyAuth: [] }],
   paths: {
-    "/health": { get: { security: [], responses: { "200": { description: "Liveness" } } } },
-    "/ready": { get: { security: [], responses: { "200": { description: "Readiness" } } } },
-    "/version": { get: { security: [], responses: { "200": { description: "Version" } } } },
-    "/api/v1/sessions": {
-      get: { responses: { "200": { description: "List sessions" } } },
-      post: { responses: { "201": { description: "Create session" } } }
-    },
-    "/api/v1/sessions/{sessionId}": {
-      get: { responses: { "200": { description: "Get session" } } },
-      delete: { responses: { "204": { description: "Delete session" } } }
-    },
-    "/api/v1/sessions/{sessionId}/connect": { post: { responses: { "200": { description: "Connect session" } } } },
-    "/api/v1/sessions/{sessionId}/disconnect": { post: { responses: { "200": { description: "Disconnect session" } } } },
-    "/api/v1/sessions/{sessionId}/logout": { post: { responses: { "200": { description: "Logout session" } } } },
-    "/api/v1/sessions/{sessionId}/qr": { get: { responses: { "200": { description: "Current mock pairing challenge" } } } },
-    "/api/v1/sessions/{sessionId}/status": { get: { responses: { "200": { description: "Session status" } } } },
-    "/api/v1/messages/text": { post: { responses: { "202": { description: "Queue mock text message" } } } },
-    "/api/v1/messages/{messageId}": { get: { responses: { "200": { description: "Message status" } } } },
-    "/api/v1/webhooks": {
-      get: { responses: { "200": { description: "List webhooks" } } },
-      post: { responses: { "201": { description: "Create webhook" } } }
-    },
-    "/api/v1/webhooks/{webhookId}": { delete: { responses: { "204": { description: "Delete webhook" } } } },
-    "/api/v1/events": { get: { responses: { "101": { description: "WebSocket upgrade" } } } }
+    "/health": { get: { security: [], ...standard("Liveness") } },
+    "/ready": { get: { security: [], ...standard("Readiness and live-protocol status") } },
+    "/version": { get: { security: [], ...standard("Version") } },
+    "/openapi.json": { get: { security: [], ...standard("OpenAPI document") } },
+    "/metrics": { get: { security: [], ...standard("Prometheus metrics") } },
+    "/dashboard": { get: { security: [], ...standard("Local management dashboard") } },
+    "/api/v1/capabilities": { get: standard("Feature-parity capability registry") },
+    "/api/v1/plugins": { get: standard("Registered safe in-process plugins") },
+    "/api/v1/sessions": { get: standard("List sessions"), post: created("Create session") },
+    "/api/v1/sessions/import": { post: created("Import mock session snapshot") },
+    "/api/v1/sessions/{sessionId}": { get: standard("Get session"), delete: { responses: { "204": response("Delete session") } } },
+    "/api/v1/sessions/{sessionId}/export": { get: standard("Export mock session snapshot") },
+    "/api/v1/sessions/{sessionId}/connect": { post: standard("Connect session") },
+    "/api/v1/sessions/{sessionId}/disconnect": { post: standard("Disconnect session") },
+    "/api/v1/sessions/{sessionId}/logout": { post: standard("Logout session") },
+    "/api/v1/sessions/{sessionId}/qr": { get: standard("Current mock QR challenge") },
+    "/api/v1/sessions/{sessionId}/pairing-code": { post: standard("Create mock phone pairing code") },
+    "/api/v1/sessions/{sessionId}/mock-complete-pairing": { post: standard("Complete mock pairing") },
+    "/api/v1/messages": { get: standard("List and search messages") },
+    "/api/v1/messages/text": { post: accepted("Send text") },
+    "/api/v1/messages/media": { post: accepted("Send image, video, audio, document, or sticker") },
+    "/api/v1/messages/location": { post: accepted("Send location or live-location contract") },
+    "/api/v1/messages/contact": { post: accepted("Send contact card") },
+    "/api/v1/messages/poll": { post: accepted("Send poll") },
+    "/api/v1/messages/mock-incoming": { post: created("Inject deterministic incoming message") },
+    "/api/v1/messages/{messageId}": { get: standard("Get message"), patch: standard("Edit message"), delete: standard("Delete message") },
+    "/api/v1/messages/{messageId}/reactions": { post: standard("Add or remove reaction") },
+    "/api/v1/messages/{messageId}/forward": { post: accepted("Forward message") },
+    "/api/v1/messages/{messageId}/receipts": { post: standard("Set delivery, read, or played receipt") },
+    "/api/v1/media": { get: standard("List media"), post: created("Upload encrypted mock media") },
+    "/api/v1/media/{mediaId}": { get: standard("Get or download media"), delete: { responses: { "204": response("Delete media") } } },
+    "/api/v1/contacts": { get: standard("List contacts"), post: created("Create or update contact") },
+    "/api/v1/contacts/check": { get: standard("Mock registration check") },
+    "/api/v1/contacts/{phone}": { get: standard("Get contact"), patch: standard("Update profile"), delete: { responses: { "204": response("Delete contact") } } },
+    "/api/v1/contacts/{phone}/block": { post: standard("Block contact") },
+    "/api/v1/contacts/{phone}/unblock": { post: standard("Unblock contact") },
+    "/api/v1/contacts/{phone}/consent": { post: standard("Record consent basis") },
+    "/api/v1/contacts/{phone}/revoke-consent": { post: standard("Revoke consent") },
+    "/api/v1/chats": { get: standard("List or search chats") },
+    "/api/v1/chats/{chatId}": { get: standard("Get chat"), patch: standard("Archive, pin, mute, or mark read") },
+    "/api/v1/chats/{chatId}/messages": { get: standard("List chat messages") },
+    "/api/v1/groups": { get: standard("List groups"), post: created("Create group") },
+    "/api/v1/groups/join": { post: standard("Join group with invite code") },
+    "/api/v1/groups/{groupId}": { get: standard("Get group metadata"), patch: standard("Update group metadata and settings") },
+    "/api/v1/groups/{groupId}/participants": { post: standard("Add, remove, promote, or demote participants") },
+    "/api/v1/groups/{groupId}/invite": { get: standard("Get invite code") },
+    "/api/v1/groups/{groupId}/revoke-invite": { post: standard("Rotate invite code") },
+    "/api/v1/groups/{groupId}/leave": { post: standard("Leave group") },
+    "/api/v1/presence": { post: standard("Set presence") },
+    "/api/v1/presence/subscribe": { post: standard("Subscribe to presence") },
+    "/api/v1/presence/{jid}": { get: standard("Get presence") },
+    "/api/v1/statuses": { get: standard("List status updates"), post: created("Publish status") },
+    "/api/v1/statuses/{statusId}/view": { post: standard("Record status view") },
+    "/api/v1/statuses/{statusId}/reaction": { post: standard("React to status") },
+    "/api/v1/channels": { get: standard("List channels"), post: created("Create channel") },
+    "/api/v1/channels/{channelId}/follow": { post: standard("Follow channel") },
+    "/api/v1/channels/{channelId}/unfollow": { post: standard("Unfollow channel") },
+    "/api/v1/channels/{channelId}/updates": { post: created("Publish channel update") },
+    "/api/v1/channels/{channelId}/updates/{updateId}/reactions": { post: standard("React to channel update") },
+    "/api/v1/communities": { get: standard("List communities"), post: created("Create community") },
+    "/api/v1/communities/{communityId}/subgroups": { post: standard("Attach or detach subgroup") },
+    "/api/v1/business/profile": { get: standard("Get business profile"), post: standard("Set business profile"), patch: standard("Update business profile") },
+    "/api/v1/business/catalog": { get: standard("List catalog products"), post: created("Create catalog product") },
+    "/api/v1/business/catalog/{productId}": { patch: standard("Update catalog product"), delete: { responses: { "204": response("Delete catalog product") } } },
+    "/api/v1/labels": { get: standard("List labels"), post: created("Create label") },
+    "/api/v1/labels/{labelId}": { patch: standard("Update label"), delete: { responses: { "204": response("Delete label") } } },
+    "/api/v1/labels/{labelId}/assign": { post: standard("Assign or remove label") },
+    "/api/v1/calls": { get: standard("List mock calls") },
+    "/api/v1/calls/mock": { post: created("Inject mock call") },
+    "/api/v1/calls/{callId}": { patch: standard("Update mock call state") },
+    "/api/v1/privacy": { get: standard("Get privacy settings"), patch: standard("Update privacy settings") },
+    "/api/v1/history/snapshots": { get: standard("List history snapshots"), post: created("Create history snapshot") },
+    "/api/v1/history/snapshots/{snapshotId}": { get: standard("Get history snapshot") },
+    "/api/v1/history/import": { post: created("Import history fixture snapshot") },
+    "/api/v1/webhooks": { get: standard("List webhooks"), post: created("Create webhook") },
+    "/api/v1/webhooks/{webhookId}": { delete: { responses: { "204": response("Delete webhook") } } },
+    "/api/v1/webhooks/deliveries": { get: standard("Webhook delivery history") },
+    "/api/v1/events": { get: { responses: { "101": response("WebSocket upgrade") } } }
   }
 } as const;

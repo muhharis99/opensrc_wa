@@ -9,6 +9,7 @@ import { PairingController, type PairingChallenge } from "./pairing-controller";
 interface SessionEvents {
   "connection.update": BaseEvent & { state: SessionState };
   "pairing.qr": BaseEvent & { challenge: PairingChallenge };
+  "pairing.code": BaseEvent & { challenge: PairingChallenge };
   "session.ready": BaseEvent;
   "credentials.updated": BaseEvent & { credentialVersion: number };
   "logged.out": BaseEvent;
@@ -24,6 +25,9 @@ export class SessionManager extends TypedEventEmitter<SessionEvents> {
     super();
     pairing.on("pairing.qr", async (challenge) => {
       await this.emit("pairing.qr", { ...this.base(challenge.sessionId, "pairing.qr"), challenge });
+    });
+    pairing.on("pairing.code", async (challenge) => {
+      await this.emit("pairing.code", { ...this.base(challenge.sessionId, "pairing.code"), challenge });
     });
   }
 
@@ -62,6 +66,17 @@ export class SessionManager extends TypedEventEmitter<SessionEvents> {
     return this.get(sessionId);
   }
 
+
+  public async requestMockPairingCode(sessionId: string, phone: string): Promise<PairingChallenge> {
+    if (this.protocolMode !== "mock") throw new OpenSrcWaError({ code: "MOCK_ONLY", category: "PAIRING_ERROR", message: "Pairing code mock hanya tersedia pada mode mock" });
+    if (!/^\d{8,16}$/.test(phone)) throw new OpenSrcWaError({ code: "INVALID_RECIPIENT", category: "VALIDATION_ERROR", message: "Nomor pairing harus berupa 8-16 digit" });
+    const current = await this.get(sessionId);
+    const machine = this.machine(current);
+    if (machine.getState() === "DISCONNECTED") await this.move(current, machine, "CONNECTING");
+    if (machine.getState() === "CONNECTING") await this.move(current, machine, "AWAITING_PAIRING");
+    return this.pairing.createMockPairingCode(sessionId, phone);
+  }
+
   public async completeMockPairing(sessionId: string): Promise<SessionRecord> {
     if (this.protocolMode !== "mock") throw new OpenSrcWaError({ code: "MOCK_ONLY", category: "PAIRING_ERROR", message: "Endpoint pairing mock hanya tersedia pada mode mock" });
     const current = await this.get(sessionId);
@@ -93,6 +108,23 @@ export class SessionManager extends TypedEventEmitter<SessionEvents> {
     this.pairing.clear(sessionId);
     await this.emit("logged.out", this.base(sessionId, "logged.out"));
     return this.get(sessionId);
+  }
+
+
+  public async exportMockSnapshot(sessionId: string): Promise<{ version: 1; session: SessionRecord; exportedAt: string; protocolStatus: "TESTED_WITH_MOCK" }> {
+    if (this.protocolMode !== "mock") throw new OpenSrcWaError({ code: "MOCK_ONLY", category: "SESSION_ERROR", message: "Export snapshot hanya tersedia pada mode mock" });
+    const session = await this.get(sessionId);
+    return { version: 1, session: { ...session, metadata: { ...session.metadata } }, exportedAt: new Date().toISOString(), protocolStatus: "TESTED_WITH_MOCK" };
+  }
+
+  public async importMockSnapshot(snapshot: { version: 1; session: SessionRecord }): Promise<SessionRecord> {
+    if (this.protocolMode !== "mock") throw new OpenSrcWaError({ code: "MOCK_ONLY", category: "SESSION_ERROR", message: "Import snapshot hanya tersedia pada mode mock" });
+    if (snapshot.version !== 1 || snapshot.session.version !== 1) throw new OpenSrcWaError({ code: "INVALID_SESSION_SNAPSHOT", category: "VALIDATION_ERROR", message: "Versi snapshot session tidak didukung" });
+    if (await this.store.loadSession(snapshot.session.sessionId)) throw new OpenSrcWaError({ code: "SESSION_EXISTS", category: "SESSION_ERROR", message: "Session sudah ada" });
+    const imported: SessionRecord = { ...snapshot.session, metadata: { ...snapshot.session.metadata, imported: "true", protocolMode: "mock" }, updatedAt: new Date().toISOString() };
+    await this.store.saveSession(imported);
+    this.machines.set(imported.sessionId, new SessionStateMachine(imported.state));
+    return { ...imported, metadata: { ...imported.metadata } };
   }
 
   public async delete(sessionId: string): Promise<void> {

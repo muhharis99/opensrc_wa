@@ -1,1 +1,2 @@
-export const mediaProtocolStatus = "NOT_STARTED" as const;
+export * from "./media-service";
+export const mediaProtocolStatus = "TESTED_WITH_MOCK" as const;
