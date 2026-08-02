@@ -2,7 +2,7 @@
 
 ## v0.4.0
 
-- Publication status: implementation committed to `main`; final validation evidence is generated after the reproducible lockfile and Docker checks pass.
+- Publication status: published to `main`.
 - Architecture: multi-provider with stable mock runtime, isolated Baileys live adapter, and an explicitly blocked native research provider.
 - QR: provider payload, PNG, Base64, and data URL are implemented.
 - Interactive messaging: buttons and list operations are implemented but remain `EXPERIMENTAL` pending live compatibility testing.
@@ -13,9 +13,11 @@
 - Session ownership: SQLite lease with TTL and owner token is implemented for processes sharing the same database on one host.
 - Outbound delivery: bounded queue with per-session and per-chat pacing is implemented.
 - Media: Base64 compatibility and streaming object-store persistence are implemented.
+- Automated validation: 40 tests, strict type-check, documentation/dependency/license checks, production build, Docker Compose validation, and Docker image build passed on GitHub-hosted Ubuntu.
 - Live E2E: harness is implemented but no live result is claimed because this environment has no user-owned WhatsApp account/device pairing.
 - Native WebSocket/Noise/Signal: provider contract and research gates are implemented; live connectivity remains `BLOCKED`.
 - Distributed multi-node production status: requires a centralized database/lease adapter, durable broker, and external object storage before horizontal scaling.
+- Validation evidence: `docs/VALIDATION_V040.md`.
 
 ## v0.3.0
 
