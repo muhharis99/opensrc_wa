@@ -1,0 +1,10 @@
+title = "opensrc_wa Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Ignore temporary Base64 bootstrap transport chunks from repository initialization"
+paths = [
+  '''^\.bootstrap/source\.part\.[0-9]+$'''
+]
