@@ -3,15 +3,29 @@ import crypto = require("node:crypto");
 import { ApiKeyAuthenticator } from "../../gateway/src/api-key-auth";
 import { FixedWindowRateLimiter } from "../../gateway/src/rate-limiter";
 import { ProviderManager } from "../../../packages/provider-contract/src/provider-manager";
-import type { ProviderConnectionState, ProviderSendRequest } from "../../../packages/provider-contract/src/types";
+import { PacedOutboundQueue } from "../../../packages/provider-contract/src/paced-outbound-queue";
+import type {
+  ProviderButton,
+  ProviderConnectionState,
+  ProviderListSection,
+  ProviderSendRequest
+} from "../../../packages/provider-contract/src/types";
 import { BaileysProviderFactory } from "../../../packages/provider-baileys/src/factory";
+import { SqliteSessionLeaseLock } from "../../../packages/provider-baileys/src/sqlite-lease-lock";
+import { NativeProvider } from "../../../packages/provider-native/src/native-provider";
+import { QrService } from "../../../packages/qr/src/qr-service";
+import { LocalObjectStore } from "../../../packages/object-store/src/local-object-store";
 import { WebhookService } from "../../../packages/webhook/src/webhook-service";
+import { liveDashboardHtml } from "./dashboard";
 import type { LiveGatewayConfig } from "./config";
 
 interface SessionView {
   sessionId: string;
   state: ProviderConnectionState;
-  qr: string | null;
+  qrPayload: string | null;
+  qrPng: Uint8Array | null;
+  qrBase64: string | null;
+  qrDataUrl: string | null;
   pairingCode: string | null;
   phone: string | null;
   updatedAt: string;
@@ -25,11 +39,26 @@ export interface LiveGatewayRuntime {
 }
 
 export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime {
-  const providers = new ProviderManager(new BaileysProviderFactory({ authRootDir: config.authRootDir }));
+  const queue = new PacedOutboundQueue({
+    sessionIntervalMs: config.outboundSessionIntervalMs,
+    chatIntervalMs: config.outboundChatIntervalMs,
+    maxPending: config.outboundMaxPending
+  });
+  const leaseLock = new SqliteSessionLeaseLock(config.leaseDatabasePath);
+  const providers = new ProviderManager(new BaileysProviderFactory({
+    authRootDir: config.authRootDir,
+    authStore: config.authStore,
+    authDatabasePath: config.authDatabasePath,
+    sessionLeaseLock: leaseLock,
+    sessionLeaseTtlMs: config.leaseTtlMs
+  }), { outboundQueue: queue });
   const sessions = new Map<string, SessionView>();
   const authenticator = new ApiKeyAuthenticator(config.apiKeyHash);
   const limiter = new FixedWindowRateLimiter(config.rateLimitPerMinute, 60_000);
   const webhooks = new WebhookService(config.webhookTimeoutMs, config.webhookMaxRetries);
+  const qrService = new QrService();
+  const objectStore = new LocalObjectStore(config.objectStoreDir);
+  const nativeProvider = new NativeProvider("native-research-status");
   if (config.webhookUrl && config.webhookSecret) webhooks.create({ url: config.webhookUrl, secret: config.webhookSecret, events: ["*"] });
 
   providers.onEvent(async (event) => {
@@ -38,13 +67,18 @@ export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime
     if (event.type === "connection.update") {
       current.state = event.state;
       current.lastError = event.state === "error" ? event.reason ?? "provider error" : null;
-      if (event.state === "connected") {
-        current.qr = null;
-        current.pairingCode = null;
-      }
+      if (event.state === "connected") clearQr(current);
     } else if (event.type === "pairing.qr") {
       current.state = "awaiting_pairing";
-      current.qr = event.qr;
+      current.qrPayload = event.qr;
+      try {
+        const rendered = await qrService.render(event.qr);
+        current.qrPng = rendered.png;
+        current.qrBase64 = rendered.base64;
+        current.qrDataUrl = rendered.dataUrl;
+      } catch (error) {
+        current.lastError = `QR_RENDER_FAILED: ${errorMessage(error)}`;
+      }
     } else if (event.type === "pairing.code") {
       current.state = "awaiting_pairing";
       current.pairingCode = event.code;
@@ -58,17 +92,23 @@ export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime
 
   const server = http.createServer(async (request: any, response: any) => {
     const requestId = crypto.randomUUID();
-    response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.setHeader("X-Request-Id", requestId);
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("Referrer-Policy", "no-referrer");
     try {
       const method = request.method ?? "GET";
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
       if (method === "GET" && url.pathname === "/health") return success(response, 200, requestId, { status: "ok", provider: "baileys" });
-      if (method === "GET" && url.pathname === "/ready") return success(response, 200, requestId, { ready: true, provider: "baileys", unofficial: true });
+      if (method === "GET" && url.pathname === "/ready") return success(response, 200, requestId, { ready: true, provider: "baileys", unofficial: true, auth_store: config.authStore });
+      if (method === "GET" && url.pathname === "/dashboard") {
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/html; charset=utf-8");
+        response.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'");
+        return response.end(liveDashboardHtml);
+      }
 
-      const apiKey = header(request.headers, "x-api-key");
+      const apiKey = header(request.headers, "x-api-key") ?? url.searchParams.get("api_key") ?? undefined;
       if (!authenticator.verify(apiKey)) return failure(response, 401, requestId, "UNAUTHORIZED", "API key tidak valid");
       const identity = crypto.createHash("sha256").update(apiKey ?? "").digest("hex").slice(0, 16);
       const rate = limiter.consume(`${identity}:${request.socket.remoteAddress ?? "unknown"}`);
@@ -81,13 +121,49 @@ export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime
       const body = async (): Promise<Record<string, unknown>> => readJson(request, config.maxBodyBytes);
 
       if (method === "GET" && url.pathname === "/api/v1/live/sessions") {
-        return success(response, 200, requestId, [...sessions.values()]);
+        return success(response, 200, requestId, {
+          sessions: [...sessions.values()].map(sessionResponse),
+          queue: providers.queueStats()
+        });
+      }
+      if (method === "GET" && url.pathname === "/api/v1/live/native/status") {
+        return success(response, 200, requestId, nativeProvider.status());
+      }
+      if (method === "GET" && url.pathname === "/api/v1/live/queue") {
+        return success(response, 200, requestId, providers.queueStats());
+      }
+      if (segments[0] === "api" && segments[1] === "v1" && segments[2] === "live" && segments[3] === "objects" && segments[4] && method === "GET") {
+        const stored = await objectStore.get(decodeURIComponent(segments[4]));
+        response.statusCode = 200;
+        response.setHeader("Content-Type", stored.metadata.contentType);
+        response.setHeader("Content-Length", stored.metadata.size);
+        response.setHeader("Content-Disposition", `attachment; filename="${safeFileName(stored.metadata.fileName ?? stored.metadata.objectId)}"`);
+        for await (const chunk of stored.stream) {
+          if (!response.write(Buffer.from(chunk))) await waitForDrain(response);
+        }
+        return response.end();
       }
 
       if (segments[0] === "api" && segments[1] === "v1" && segments[2] === "live" && segments[3] === "sessions" && segments[4]) {
         const sessionId = validSessionId(decodeURIComponent(segments[4]));
         const action = segments[5];
-        if (!action && method === "GET") return success(response, 200, requestId, sessions.get(sessionId) ?? freshSession(sessionId));
+        if (!action && method === "GET") return success(response, 200, requestId, sessionResponse(sessions.get(sessionId) ?? freshSession(sessionId)));
+        if (action === "qr" && method === "GET") {
+          const view = requireSessionQr(sessions, sessionId);
+          return success(response, 200, requestId, {
+            session_id: sessionId,
+            payload: view.qrPayload,
+            base64: view.qrBase64,
+            data_url: view.qrDataUrl
+          });
+        }
+        if (action === "qr.png" && method === "GET") {
+          const view = requireSessionQr(sessions, sessionId);
+          response.statusCode = 200;
+          response.setHeader("Content-Type", "image/png");
+          response.setHeader("Cache-Control", "no-store, private");
+          return response.end(Buffer.from(view.qrPng as Uint8Array));
+        }
         if (action === "connect" && method === "POST") {
           const input = await body();
           const phone = optionalString(input.phone);
@@ -95,9 +171,10 @@ export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime
           view.state = "connecting";
           view.phone = phone;
           view.updatedAt = new Date().toISOString();
+          view.lastError = null;
           sessions.set(sessionId, view);
           await providers.connect(sessionId, { ...(phone ? { phone } : {}), syncFullHistory: input.sync_full_history === true });
-          return success(response, 202, requestId, view);
+          return success(response, 202, requestId, sessionResponse(view));
         }
         if (action === "pairing-code" && method === "POST") {
           const input = await body();
@@ -107,20 +184,33 @@ export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime
         }
         if (action === "disconnect" && method === "POST") {
           await providers.disconnect(sessionId);
-          return success(response, 200, requestId, sessions.get(sessionId) ?? freshSession(sessionId));
+          return success(response, 200, requestId, sessionResponse(sessions.get(sessionId) ?? freshSession(sessionId)));
         }
         if (action === "logout" && method === "POST") {
           await providers.logout(sessionId);
-          return success(response, 200, requestId, sessions.get(sessionId) ?? freshSession(sessionId));
+          return success(response, 200, requestId, sessionResponse(sessions.get(sessionId) ?? freshSession(sessionId)));
         }
         if (action === "messages" && method === "POST") {
           const input = await body();
-          const requestBody = validateSendRequest(input);
-          return success(response, 202, requestId, await providers.send(sessionId, requestBody));
+          return success(response, 202, requestId, await providers.send(sessionId, validateSendRequest(input)));
         }
         if (action === "media" && segments[6] === "download" && method === "POST") {
           const input = await body();
-          const bytes = await providers.get(sessionId).downloadMedia(input.message);
+          const provider = providers.get(sessionId);
+          if (input.storage === "object") {
+            const objectId = `media_${crypto.randomUUID().replaceAll("-", "")}`;
+            const metadata = await objectStore.put({
+              objectId,
+              contentType: optionalString(input.content_type) ?? "application/octet-stream",
+              ...(optionalString(input.file_name) ? { fileName: optionalString(input.file_name) as string } : {}),
+              stream: await provider.downloadMediaStream(input.message)
+            });
+            return success(response, 201, requestId, {
+              ...metadata,
+              download_path: `/api/v1/live/objects/${metadata.objectId}`
+            });
+          }
+          const bytes = await provider.downloadMedia(input.message);
           return success(response, 200, requestId, { base64: Buffer.from(bytes).toString("base64"), size: bytes.byteLength });
         }
         if (action === "contacts" && method === "GET") return success(response, 200, requestId, await providers.get(sessionId).getContacts());
@@ -129,6 +219,9 @@ export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime
           const input = await body();
           if (!Array.isArray(input.numbers)) throw new Error("numbers wajib berupa array");
           return success(response, 200, requestId, await providers.get(sessionId).checkNumbers(input.numbers.map(String)));
+        }
+        if (action === "broadcasts" && segments[6] && method === "GET") {
+          return success(response, 200, requestId, await providers.get(sessionId).getBroadcastListInfo(decodeURIComponent(segments[6])));
         }
         if (action === "presence" && method === "POST") {
           const input = await body();
@@ -165,7 +258,8 @@ export function createLiveGateway(config: LiveGatewayConfig): LiveGatewayRuntime
       if (method === "GET" && url.pathname === "/api/v1/live/webhooks/history") return success(response, 200, requestId, webhooks.history());
       return failure(response, 404, requestId, "NOT_FOUND", "Endpoint tidak ditemukan");
     } catch (error) {
-      return failure(response, 400, requestId, "LIVE_PROVIDER_ERROR", errorMessage(error));
+      const message = errorMessage(error);
+      return failure(response, statusFor(message), requestId, errorCode(message), message);
     }
   });
 
@@ -215,8 +309,7 @@ function validateSendRequest(input: Record<string, unknown>): ProviderSendReques
   const to = requiredString(input.to, "to");
   if (kind === "text") return { kind, to, text: requiredString(input.text, "text"), ...(Array.isArray(input.mentions) ? { mentions: input.mentions.map(String) } : {}), ...(input.quoted ? { quoted: input.quoted } : {}) };
   if (["image", "video", "audio", "document", "sticker"].includes(kind)) {
-    const media = input.media;
-    if (!media || typeof media !== "object" || Array.isArray(media)) throw new Error("media wajib berupa object");
+    const media = requiredRecord(input.media, "media");
     return { kind: kind as "image" | "video" | "audio" | "document" | "sticker", to, media: media as any, ...(optionalString(input.caption) ? { caption: optionalString(input.caption) as string } : {}), voiceNote: input.voice_note === true, gifPlayback: input.gif_playback === true, ...(input.quoted ? { quoted: input.quoted } : {}) };
   }
   if (kind === "location") return { kind, to, latitude: requiredNumber(input.latitude, "latitude"), longitude: requiredNumber(input.longitude, "longitude"), ...(optionalString(input.name) ? { name: optionalString(input.name) as string } : {}), ...(optionalString(input.address) ? { address: optionalString(input.address) as string } : {}) };
@@ -225,16 +318,53 @@ function validateSendRequest(input: Record<string, unknown>): ProviderSendReques
     if (!Array.isArray(input.options)) throw new Error("options wajib berupa array");
     return { kind, to, question: requiredString(input.question, "question"), options: input.options.map(String), ...(typeof input.selectable_count === "number" ? { selectableCount: input.selectable_count } : {}) };
   }
+  if (kind === "buttons") {
+    if (!Array.isArray(input.buttons) || input.buttons.length < 1 || input.buttons.length > 3) throw new Error("buttons wajib berisi 1-3 tombol");
+    const buttons: ProviderButton[] = input.buttons.map((value, index) => {
+      const button = requiredRecord(value, `buttons.${index}`);
+      return { id: requiredString(button.id, `buttons.${index}.id`), text: requiredString(button.text, `buttons.${index}.text`) };
+    });
+    return { kind, to, text: requiredString(input.text, "text"), buttons, ...(optionalString(input.footer) ? { footer: optionalString(input.footer) as string } : {}), ...(input.quoted ? { quoted: input.quoted } : {}) };
+  }
+  if (kind === "list") {
+    if (!Array.isArray(input.sections) || input.sections.length < 1 || input.sections.length > 10) throw new Error("sections wajib berisi 1-10 bagian");
+    let rowCount = 0;
+    const sections: ProviderListSection[] = input.sections.map((value, sectionIndex) => {
+      const section = requiredRecord(value, `sections.${sectionIndex}`);
+      if (!Array.isArray(section.rows) || section.rows.length < 1) throw new Error(`sections.${sectionIndex}.rows wajib diisi`);
+      rowCount += section.rows.length;
+      return {
+        ...(optionalString(section.title) ? { title: optionalString(section.title) as string } : {}),
+        rows: section.rows.map((rowValue, rowIndex) => {
+          const row = requiredRecord(rowValue, `sections.${sectionIndex}.rows.${rowIndex}`);
+          return {
+            id: requiredString(row.id, "row.id"),
+            title: requiredString(row.title, "row.title"),
+            ...(optionalString(row.description) ? { description: optionalString(row.description) as string } : {})
+          };
+        })
+      };
+    });
+    if (rowCount > 100) throw new Error("Jumlah row list maksimal 100");
+    return { kind, to, text: requiredString(input.text, "text"), buttonText: requiredString(input.button_text, "button_text"), sections, ...(optionalString(input.title) ? { title: optionalString(input.title) as string } : {}), ...(optionalString(input.footer) ? { footer: optionalString(input.footer) as string } : {}), ...(input.quoted ? { quoted: input.quoted } : {}) };
+  }
+  if (kind === "broadcast") {
+    if (!/^(\d+|status)@broadcast$/.test(to)) throw new Error("to harus berupa broadcast JID");
+    return { kind, to, text: requiredString(input.text, "text"), ...(Array.isArray(input.status_jid_list) ? { statusJidList: input.status_jid_list.map(String) } : {}), ...(optionalString(input.background_color) ? { backgroundColor: optionalString(input.background_color) as string } : {}), ...(typeof input.font === "number" ? { font: input.font } : {}) };
+  }
   if (kind === "reaction") return { kind, to, key: requiredKey(input.key), emoji: requiredString(input.emoji, "emoji") };
-  if (kind === "delete") return { kind, to, key: requiredKey(input.key) };
+  if (kind === "delete") {
+    const scope = optionalString(input.scope) ?? "everyone";
+    if (scope !== "me" && scope !== "everyone") throw new Error("scope harus me atau everyone");
+    return { kind, to, key: requiredKey(input.key), scope, ...(typeof input.timestamp === "number" ? { timestamp: input.timestamp } : {}), deleteMedia: input.delete_media === true };
+  }
   if (kind === "edit") return { kind, to, key: requiredKey(input.key), text: requiredString(input.text, "text") };
   if (kind === "forward") return { kind, to, message: input.message };
   throw new Error("kind pesan tidak didukung");
 }
 
 function requiredKey(value: unknown): { remoteJid: string; id: string; fromMe?: boolean; participant?: string } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("key wajib berupa object");
-  const record = value as Record<string, unknown>;
+  const record = requiredRecord(value, "key");
   return { remoteJid: requiredString(record.remoteJid, "key.remoteJid"), id: requiredString(record.id, "key.id"), ...(typeof record.fromMe === "boolean" ? { fromMe: record.fromMe } : {}), ...(optionalString(record.participant) ? { participant: optionalString(record.participant) as string } : {}) };
 }
 
@@ -249,22 +379,50 @@ async function readJson(request: any, maxBytes: number): Promise<Record<string, 
   }
   if (size === 0) return {};
   const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("JSON body wajib berupa object");
-  return parsed as Record<string, unknown>;
+  return requiredRecord(parsed, "JSON body");
 }
 
 function success(response: any, status: number, requestId: string, data: unknown): void {
   response.statusCode = status;
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.end(JSON.stringify({ success: true, data, error: null, meta: { request_id: requestId, timestamp: new Date().toISOString() } }));
 }
 
 function failure(response: any, status: number, requestId: string, code: string, message: string): void {
   response.statusCode = status;
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.end(JSON.stringify({ success: false, data: null, error: { code, message }, meta: { request_id: requestId, timestamp: new Date().toISOString() } }));
 }
 
 function freshSession(sessionId: string): SessionView {
-  return { sessionId, state: "disconnected", qr: null, pairingCode: null, phone: null, updatedAt: new Date().toISOString(), lastError: null };
+  return { sessionId, state: "disconnected", qrPayload: null, qrPng: null, qrBase64: null, qrDataUrl: null, pairingCode: null, phone: null, updatedAt: new Date().toISOString(), lastError: null };
+}
+
+function clearQr(view: SessionView): void {
+  view.qrPayload = null;
+  view.qrPng = null;
+  view.qrBase64 = null;
+  view.qrDataUrl = null;
+  view.pairingCode = null;
+}
+
+function requireSessionQr(sessions: Map<string, SessionView>, sessionId: string): SessionView {
+  const view = sessions.get(sessionId);
+  if (!view?.qrPng || !view.qrBase64 || !view.qrDataUrl) throw new Error("QR_NOT_AVAILABLE");
+  return view;
+}
+
+function sessionResponse(view: SessionView): Record<string, unknown> {
+  return {
+    sessionId: view.sessionId,
+    state: view.state,
+    qr_available: Boolean(view.qrPng),
+    qr_data_url: view.qrDataUrl,
+    pairingCode: view.pairingCode,
+    phone: view.phone,
+    updatedAt: view.updatedAt,
+    lastError: view.lastError
+  };
 }
 
 function validSessionId(value: string): string {
@@ -291,6 +449,25 @@ function requiredNumber(value: unknown, name: string): number {
   return value;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function requiredRecord(value: unknown, name: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} wajib berupa object`);
+  return value as Record<string, unknown>;
 }
+
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function statusFor(message: string): number {
+  if (message.includes("OUTBOUND_QUEUE_FULL")) return 429;
+  if (message.includes("SESSION_LOCKED")) return 409;
+  if (message.includes("QR_NOT_AVAILABLE")) return 404;
+  if (message.includes("NATIVE_PROTOCOL_BLOCKED")) return 501;
+  return 400;
+}
+function errorCode(message: string): string {
+  if (message.includes("OUTBOUND_QUEUE_FULL")) return "OUTBOUND_QUEUE_FULL";
+  if (message.includes("SESSION_LOCKED")) return "SESSION_LOCKED";
+  if (message.includes("QR_NOT_AVAILABLE")) return "QR_NOT_AVAILABLE";
+  if (message.includes("NATIVE_PROTOCOL_BLOCKED")) return "NATIVE_PROTOCOL_BLOCKED";
+  return "LIVE_PROVIDER_ERROR";
+}
+function safeFileName(value: string): string { return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "download.bin"; }
+function waitForDrain(response: any): Promise<void> { return new Promise((resolve) => response.once("drain", resolve)); }
