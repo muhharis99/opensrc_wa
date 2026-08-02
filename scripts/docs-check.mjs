@@ -7,6 +7,8 @@ const required = [
   "docs/MESSAGE_LIFECYCLE.md", "docs/WEBHOOKS.md", "docs/API.md", "docs/LIVE_API.md", "docs/TESTING.md",
   "docs/TROUBLESHOOTING.md", "docs/RESPONSIBLE_USE.md", "docs/DEPENDENCY_POLICY.md",
   "docs/REFERENCES.md", "docs/ROADMAP.md", "docs/LIVE_PROVIDER_STATUS.md",
+  "docs/LIVE_E2E.md", "docs/AUTH_STORAGE.md", "docs/OUTBOUND_QUEUE.md",
+  "docs/OBJECT_STORAGE.md", "docs/NATIVE_PROVIDER_STATUS.md",
   "docs/adr/0001-multi-provider-baileys.md"
 ];
 
@@ -19,10 +21,18 @@ const requiredPhrases = [
   "jangan gunakan proyek ini untuk spam",
   "live e2e dinonaktifkan",
   "whatsappprovider",
-  "baileysprovider"
+  "baileysprovider",
+  "native_protocol_blocked",
+  "outbound queue",
+  "streaming media"
 ];
 
 const missing = requiredPhrases.filter((phrase) => !readme.includes(phrase));
 if (missing.length > 0) {
   throw new Error(`README is missing required disclaimer/status phrases: ${missing.join(", ")}`);
+}
+
+const liveStatus = (await readFile("docs/LIVE_PROVIDER_STATUS.md", "utf8")).toLowerCase();
+for (const phrase of ["experimental", "live_tested", "native websocket/noise/signal", "delete-for-me"]) {
+  if (!liveStatus.includes(phrase)) throw new Error(`LIVE_PROVIDER_STATUS is missing '${phrase}'`);
 }
