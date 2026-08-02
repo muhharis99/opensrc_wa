@@ -2,14 +2,13 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 const forbidden = ["venom", "whatsapp-web.js", "wppconnect", "open-wa", "puppeteer", "playwright", "selenium"];
-const referenceAllowedPrefixes = ["docs/", "README.md", "AUDIT.md", "scripts/dependency-check.mjs"];
+const documentationPrefixes = ["docs/", "README.md", "AUDIT.md", "CHANGELOG.md"];
+const referenceAllowedPrefixes = [...documentationPrefixes, "scripts/dependency-check.mjs"];
 const baileysToken = "@whiskeysockets/baileys";
 const baileysAllowedPrefixes = [
   "packages/provider-baileys/",
   "tests/provider-baileys",
-  "docs/",
-  "README.md",
-  "AUDIT.md",
+  ...documentationPrefixes,
   "package.json",
   "pnpm-lock.yaml",
   "scripts/dependency-check.mjs"
