@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 — Multi-provider Live Gateway
+
+- Added `AUDIT.md` and ADR 0001 documenting the move from clean-room-only to a multi-provider architecture.
+- Added provider-neutral `WhatsAppProvider` contracts and a multi-session `ProviderManager`.
+- Added an isolated Baileys adapter pinned to `@whiskeysockets/baileys@7.0.0-rc13`.
+- Added QR and pairing-code event mapping, credential persistence, session restore, logout, conflict detection, and exponential reconnect.
+- Added live send operations for text, mentions, reply/quote, image, video, audio, voice note, document, sticker, location, contact, poll, reaction, edit, delete, and forward.
+- Added live event mapping for incoming messages, message updates, presence, contacts, chats, groups, calls, and history sync.
+- Added live contact checks, block/unblock, profile updates, group creation/member/admin/settings/invite operations, and media download/decryption.
+- Added authenticated live REST gateway on port `3001`, independent from the stable mock gateway.
+- Added signed live webhook forwarding with bounded retry and dead-letter history.
+- Added consent-aware auto-reply and throttled broadcast examples.
+- Updated dependency policy to isolate Baileys and continue prohibiting browser automation, copied source, and unapproved gateway wrappers.
+- Generated a reproducible pnpm lockfile and passed full validation with 32 automated tests.
+- Live E2E remains opt-in and has not been claimed as completed without owned-account testing.
+
 ## 0.2.0 — Feature Runtime
 
 - Added capability registry with machine-readable implementation status.
@@ -11,7 +27,7 @@
 - Added history snapshots and mock session export/import.
 - Added TypeScript SDK, safe plugin hooks, local dashboard, expanded CLI, REST API, and OpenAPI document.
 - Expanded automated coverage to 30 unit and integration tests.
-- Kept all live protocol functions explicitly `BLOCKED` pending clean-room validation.
+- Kept all native live protocol functions explicitly `BLOCKED` pending clean-room validation.
 
 ## 0.1.0 — Foundation
 
