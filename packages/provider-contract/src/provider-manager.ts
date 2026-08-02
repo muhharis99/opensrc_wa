@@ -7,13 +7,21 @@ import type {
   ProviderSendResult,
   WhatsAppProvider
 } from "./types";
+import type { PacedOutboundQueue, PacedOutboundQueueStats } from "./paced-outbound-queue";
+
+export interface ProviderManagerOptions {
+  outboundQueue?: PacedOutboundQueue;
+}
 
 export class ProviderManager {
   private readonly providers = new Map<string, WhatsAppProvider>();
   private readonly listeners = new Set<ProviderEventListener>();
   private readonly unsubscribers = new Map<string, () => void>();
 
-  public constructor(private readonly factory: ProviderFactory) {}
+  public constructor(
+    private readonly factory: ProviderFactory,
+    private readonly options: ProviderManagerOptions = {}
+  ) {}
 
   public get(sessionId: string): WhatsAppProvider {
     const existing = this.providers.get(sessionId);
@@ -27,6 +35,8 @@ export class ProviderManager {
     return provider;
   }
 
+  public listSessionIds(): string[] { return [...this.providers.keys()].sort(); }
+
   public async connect(sessionId: string, options?: ProviderConnectOptions): Promise<void> {
     await this.get(sessionId).connect(options);
   }
@@ -36,7 +46,13 @@ export class ProviderManager {
   }
 
   public async send(sessionId: string, request: ProviderSendRequest): Promise<ProviderSendResult> {
-    return this.get(sessionId).send(request);
+    const provider = this.get(sessionId);
+    if (!this.options.outboundQueue) return provider.send(request);
+    return this.options.outboundQueue.enqueue(sessionId, request.to, () => provider.send(request));
+  }
+
+  public queueStats(): PacedOutboundQueueStats | null {
+    return this.options.outboundQueue?.stats() ?? null;
   }
 
   public async disconnect(sessionId: string): Promise<void> {
