@@ -4,7 +4,7 @@ const required = [
   "README.md", "AUDIT.md", "SECURITY.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md",
   "docs/ARCHITECTURE.md", "docs/PROTOCOL_RESEARCH.md", "docs/PROTOCOL_STATUS.md",
   "docs/SECURITY_MODEL.md", "docs/THREAT_MODEL.md", "docs/SESSION_LIFECYCLE.md",
-  "docs/MESSAGE_LIFECYCLE.md", "docs/WEBHOOKS.md", "docs/API.md", "docs/TESTING.md",
+  "docs/MESSAGE_LIFECYCLE.md", "docs/WEBHOOKS.md", "docs/API.md", "docs/LIVE_API.md", "docs/TESTING.md",
   "docs/TROUBLESHOOTING.md", "docs/RESPONSIBLE_USE.md", "docs/DEPENDENCY_POLICY.md",
   "docs/REFERENCES.md", "docs/ROADMAP.md", "docs/LIVE_PROVIDER_STATUS.md",
   "docs/adr/0001-multi-provider-baileys.md"
