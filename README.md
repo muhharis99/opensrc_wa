@@ -1,120 +1,37 @@
 # opensrc_wa
 
-`opensrc_wa` adalah platform open-source mandiri untuk penelitian interoperabilitas perangkat berbasis mekanisme WhatsApp Web/Multi-Device dengan pendekatan **clean-room implementation**.
+`opensrc_wa` adalah gateway WhatsApp tidak resmi berbasis Node.js dan TypeScript dengan arsitektur **multi-provider**.
 
-> **Status protokol live: `BLOCKED`.** Versi `0.2.0` menyediakan feature-complete mock runtime, REST API, WebSocket events, webhook, CLI, SDK, dashboard, persistence, keamanan, dan pengujian. Versi ini tidak mengklaim pairing atau pertukaran pesan dengan layanan WhatsApp secara live.
+- `mock`: runtime deterministik untuk development, demo, dan CI.
+- `baileys`: provider live pertama, diisolasi melalui adapter.
+- `native`: jalur riset WebSocket clean-room untuk masa depan.
 
-`opensrc_wa` adalah proyek independen dan tidak berafiliasi, tidak disponsori, serta tidak didukung oleh WhatsApp atau Meta.
+> **Unofficial software.** Proyek ini tidak berafiliasi, tidak disponsori, dan tidak didukung oleh WhatsApp atau Meta. WhatsApp dapat mengubah protokol kapan saja sehingga fitur live dapat berhenti berfungsi. Akun dapat dibatasi atau diblokir apabila melanggar Terms of Service.
 
-## Prinsip utama
+## Larangan penggunaan
 
-- Membangun kemampuan publik secara mandiri, bukan menggunakan Baileys, Venom Bot, `whatsapp-web.js`, WPPConnect, open-wa, fork, wrapper, source salinan, atau gateway siap pakai.
-- Tidak menggunakan Chromium, Puppeteer, Playwright, Selenium, maupun browser automation sebagai konektor.
-- Tidak mengarang endpoint, schema, key, constant, QR, pairing code, atau bukti koneksi live.
-- Primitive kriptografi menggunakan Node.js/OpenSSL; proyek mengimplementasikan lifecycle, orchestration, persistence, API, dan domain runtime.
-- Runtime default adalah `mock`, sehingga integrasi dapat dikembangkan dan diuji tanpa akun nyata.
-- Fitur live hanya boleh berubah menjadi `LIVE_TESTED` setelah memiliki bukti pengujian legal menggunakan akun dan perangkat sendiri.
+Jangan gunakan proyek ini untuk spam, bulk messaging tanpa persetujuan, scraping nomor, stalkerware, account farming, ban evasion, CAPTCHA bypass, pencurian credential, atau pengiriman pesan kepada penerima yang tidak memberikan izin.
 
-## Kemampuan versi 0.2.0
-
-### Session dan pairing
-
-- Multi-session lifecycle.
-- State machine koneksi.
-- QR mock dan pairing-code mock.
-- Encrypted file store dan SQLite.
-- Reconnect abstraction, logout, penghapusan session.
-- Export dan import snapshot session mock.
-
-### Pesan
-
-- Teks, reply, quoted message, forward.
-- Reaction, edit, delete untuk diri sendiri atau semua orang.
-- Delivery, read, dan played receipt.
-- Image, video, audio, voice note, document, dan sticker contract.
-- Location dan live-location contract.
-- Contact card dan poll.
-- View-once serta disappearing-message metadata.
-- Incoming-message injection untuk fixture dan integration test.
-- Idempotency dan duplicate-event suppression.
-
-### Media
-
-- Upload Base64 dengan MIME validation dan size limit.
-- Penyimpanan mock terenkripsi AES-256-GCM.
-- SHA-256 integrity metadata.
-- Download, list, dan delete.
-- Caption, voice-note, dan view-once metadata.
-
-### Chat dan kontak
-
-- Daftar dan pencarian chat.
-- Archive, pin, mute, unread counter, dan mark-read state.
-- Kontak, profil, about, foto profil, registration check mock.
-- Block/unblock.
-- Consent grant/revoke dan outbound consent guard.
-- History snapshot export dan fixture import.
-
-### Grup, presence, status, channel, dan komunitas
-
-- Membuat grup dan membaca metadata.
-- Update subject, description, picture, announce, lock, approval, dan disappearing setting.
-- Add/remove participant serta role member/admin/superadmin.
-- Invite code, revoke invite, join, dan leave.
-- Presence available, unavailable, composing, recording, dan paused.
-- Status teks/media, viewer, dan reaction.
-- Channel create, follow/unfollow, publish update, dan reaction.
-- Community create serta attach/detach subgroup.
-
-### Business, call, label, dan privacy
-
-- Business profile.
-- Catalog product create, update, hide, list, dan delete.
-- Label chat/message.
-- Mock call lifecycle: ringing, accepted, rejected, missed, dan ended.
-- Privacy settings termasuk last seen, online, profile photo, read receipt, group invite, dan silence unknown calls.
-
-### Developer experience
-
-- REST API dan OpenAPI 3.1.
-- Typed WebSocket event stream.
-- Signed webhook dengan retry dan dead-letter history.
-- CLI.
-- TypeScript SDK.
-- Safe in-process plugin hooks.
-- Plain PHP, Laravel, dan CodeIgniter examples.
-- Dashboard lokal pada `/dashboard`.
-- Capability registry pada `/api/v1/capabilities`.
-- Docker, Docker Compose, GitHub Actions, CodeQL, dan secret scanning.
-
-## Status kemampuan
-
-Gunakan endpoint:
+## Arsitektur
 
 ```text
-GET /api/v1/capabilities
+REST / CLI / SDK
+       |
+Application services
+       |
+WhatsAppProvider
+  |-- MockProvider
+  |-- BaileysProvider
+  `-- NativeProvider (future)
 ```
 
-Setiap kemampuan memiliki salah satu status berikut:
-
-```text
-IMPLEMENTED
-TESTED_WITH_UNIT
-TESTED_WITH_MOCK
-TESTED_WITH_FIXTURE
-LIVE_TESTED
-EXPERIMENTAL
-BLOCKED
-NOT_STARTED
-```
-
-Kemampuan domain pada versi ini berstatus `TESTED_WITH_MOCK`. Handshake, pairing, messaging, media, dan history sync pada jaringan live tetap `BLOCKED`.
+Tipe internal Baileys tidak diekspos melalui API publik. Keputusan ini didokumentasikan di `docs/adr/0001-multi-provider-baileys.md`.
 
 ## Persyaratan
 
 - Node.js `22.16.0` atau lebih baru.
 - pnpm `10.14.0`.
-- TypeScript `5.8.3` tersedia pada PATH untuk bootstrap tanpa dependency registry.
+- TypeScript `5.8.3`.
 
 ## Instalasi
 
@@ -124,27 +41,222 @@ cd opensrc_wa
 corepack enable
 corepack prepare pnpm@10.14.0 --activate
 pnpm install --frozen-lockfile
+cp .env.example .env
 ```
 
-## Konfigurasi
+Buat API key hash dan session encryption key:
 
 ```bash
-cp .env.example .env
-node scripts/hash-api-key.mjs "ganti-dengan-api-key-kuat"
+node scripts/hash-api-key.mjs "api-key-yang-kuat"
 node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex')+'\n')"
 ```
 
-Masukkan hasilnya ke:
+Masukkan hasilnya ke `.env`:
 
 ```env
 OPEN_SRC_WA_API_KEY_SHA256=<sha256-api-key>
 OPEN_SRC_WA_SESSION_KEY=<64-karakter-hex>
-OPEN_SRC_WA_PROTOCOL_MODE=mock
 ```
 
-Jangan commit `.env`.
+Jangan commit `.env`, direktori `runtime`, atau credential provider.
 
-## Validasi
+## Menjalankan runtime mock
+
+```bash
+pnpm build
+pnpm start
+```
+
+Mock gateway berjalan pada `http://localhost:3000`.
+
+Endpoint publik:
+
+- `GET /health`
+- `GET /ready`
+- `GET /version`
+- `GET /openapi.json`
+- `GET /dashboard`
+
+Endpoint `/api/v1/*` membutuhkan:
+
+```text
+X-API-Key: API_KEY_ASLI
+```
+
+## Menjalankan provider live Baileys
+
+Pastikan `.env` memuat:
+
+```env
+LIVE_PORT=3001
+OPEN_SRC_WA_BAILEYS_AUTH_DIR=./runtime/baileys-auth
+OPEN_SRC_WA_LIVE_RATE_LIMIT_PER_MINUTE=60
+```
+
+Kemudian:
+
+```bash
+pnpm build
+set -a
+. ./.env
+set +a
+pnpm start:live
+```
+
+Live gateway berjalan pada `http://localhost:3001`.
+
+### Membuat session dan menampilkan QR
+
+```bash
+curl -X POST http://localhost:3001/api/v1/live/sessions/utama/connect \
+  -H "X-API-Key: API_KEY_ASLI" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+curl http://localhost:3001/api/v1/live/sessions/utama \
+  -H "X-API-Key: API_KEY_ASLI"
+```
+
+Nilai `qr` pada response session dipakai untuk membuat gambar QR pada frontend. QR adalah data sensitif sementara dan tidak boleh dicatat ke log publik.
+
+### Pairing code
+
+```bash
+curl -X POST http://localhost:3001/api/v1/live/sessions/utama/connect \
+  -H "X-API-Key: API_KEY_ASLI" \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"6281234567890"}'
+```
+
+atau:
+
+```bash
+curl -X POST http://localhost:3001/api/v1/live/sessions/utama/pairing-code \
+  -H "X-API-Key: API_KEY_ASLI" \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"6281234567890"}'
+```
+
+Nomor harus menyertakan kode negara dan hanya berisi digit.
+
+### Kirim teks
+
+```bash
+curl -X POST http://localhost:3001/api/v1/live/sessions/utama/messages \
+  -H "X-API-Key: API_KEY_ASLI" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "kind":"text",
+    "to":"6281234567890@s.whatsapp.net",
+    "text":"Halo dari opensrc_wa"
+  }'
+```
+
+### Kirim media
+
+```bash
+curl -X POST http://localhost:3001/api/v1/live/sessions/utama/messages \
+  -H "X-API-Key: API_KEY_ASLI" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "kind":"image",
+    "to":"6281234567890@s.whatsapp.net",
+    "caption":"Contoh gambar",
+    "media":{"url":"https://example.com/image.jpg"}
+  }'
+```
+
+`media` mendukung `base64`, `url`, atau `filePath`. Batasi akses `filePath` hanya ke berkas yang memang diizinkan aplikasi Anda.
+
+### Operasi pesan yang tersedia
+
+- `text` dengan mention dan quoted message;
+- `image`, `video`, `audio`, `document`, `sticker`;
+- `location`;
+- `contact`/vCard;
+- `poll`;
+- `reaction`;
+- `edit`;
+- `delete`;
+- `forward`.
+
+Semua operasi dikirim ke endpoint `/messages` dengan field `kind` yang sesuai.
+
+### Kontak, chat, dan nomor
+
+```text
+GET  /api/v1/live/sessions/{sessionId}/contacts
+GET  /api/v1/live/sessions/{sessionId}/chats
+POST /api/v1/live/sessions/{sessionId}/numbers/check
+POST /api/v1/live/sessions/{sessionId}/contacts/block
+```
+
+### Grup
+
+```text
+POST /api/v1/live/sessions/{sessionId}/groups
+```
+
+Field `operation` mendukung:
+
+- `create`;
+- `participants` dengan `add`, `remove`, `promote`, atau `demote`;
+- `subject`;
+- `description`;
+- `setting`;
+- `invite`;
+- `revoke-invite`;
+- `accept-invite`.
+
+### Presence dan profil
+
+```text
+POST /api/v1/live/sessions/{sessionId}/presence
+POST /api/v1/live/sessions/{sessionId}/profile
+```
+
+Presence mendukung `available`, `unavailable`, `composing`, `recording`, dan `paused`.
+
+### Download media masuk
+
+```text
+POST /api/v1/live/sessions/{sessionId}/media/download
+```
+
+Kirim object pesan provider pada field `message`. Response mengandung media Base64. Untuk produksi, pindahkan streaming media ke object storage agar tidak membebani memory.
+
+## Webhook live
+
+Set:
+
+```env
+OPEN_SRC_WA_LIVE_WEBHOOK_URL=https://example.com/webhooks/whatsapp
+OPEN_SRC_WA_LIVE_WEBHOOK_SECRET=secret-minimal-24-karakter
+```
+
+Event provider akan dikirim menggunakan HMAC signature, retry terbatas, dan dead-letter history. Riwayat tersedia pada:
+
+```text
+GET /api/v1/live/webhooks/history
+```
+
+## Multi-session dan session restore
+
+Setiap `sessionId` memiliki direktori auth terpisah di `OPEN_SRC_WA_BAILEYS_AUTH_DIR`. Credential diperbarui pada event `creds.update`, sehingga session dapat dipulihkan setelah restart.
+
+Utility multi-file cocok untuk bootstrap dan instalasi kecil. Untuk ratusan session, implementasikan auth repository database dan distributed locking sebelum produksi.
+
+## Auto reconnect
+
+Adapter melakukan reconnect eksponensial untuk disconnect yang retryable. Reconnect tidak dijalankan untuk logout, session conflict, atau disconnect manual.
+
+## Rate limiting
+
+- Mock gateway memiliki HTTP rate limit sendiri.
+- Live gateway memiliki `OPEN_SRC_WA_LIVE_RATE_LIMIT_PER_MINUTE`.
+- Aplikasi produksi tetap perlu outbound queue per session/chat, pacing, retry budget, consent registry, dan circuit breaker.
+
+## Pengujian
 
 ```bash
 pnpm lint
@@ -157,124 +269,31 @@ pnpm dependency:check
 pnpm license:check
 ```
 
-Live E2E harus tetap nonaktif pada CI publik:
+Adapter Baileys diuji menggunakan fake module, tanpa membuka koneksi WhatsApp. Live E2E dinonaktifkan secara default:
 
 ```env
 ENABLE_LIVE_E2E=false
 ```
 
-## Menjalankan gateway
+## Status fitur
 
-```bash
-set -a
-. ./.env
-set +a
-pnpm build
-pnpm start
-```
+Runtime mock tetap menyediakan feature-parity luas untuk pengembangan. Provider live pertama mencakup session, QR, pairing code, session restore, auto reconnect, pesan, media, receipt/event mapping, presence, kontak, chat, grup, block/unblock, profil, history event, dan call event.
 
-Gateway berjalan pada `http://localhost:3000`.
-
-Endpoint publik:
-
-- `GET /health`
-- `GET /ready`
-- `GET /version`
-- `GET /openapi.json`
-- `GET /dashboard`
-
-Endpoint `/api/v1/*` membutuhkan header:
-
-```text
-X-API-Key: API_KEY_ASLI
-```
-
-## Alur pairing mock
-
-```bash
-export OPEN_SRC_WA_API_KEY="api-key-asli"
-pnpm build
-node dist/apps/cli/src/index.js session:create utama
-node dist/apps/cli/src/index.js session:connect utama
-node dist/apps/cli/src/index.js session:qr utama
-node dist/apps/cli/src/index.js session:mock-complete-pairing utama
-```
-
-Alternatif pairing code:
-
-```bash
-node dist/apps/cli/src/index.js session:pairing-code utama --phone 6281234567890
-node dist/apps/cli/src/index.js session:mock-complete-pairing utama
-```
-
-QR dan pairing code tersebut bukan credential WhatsApp. Keduanya hanya menguji lifecycle aplikasi.
-
-## Contoh pesan mock
-
-```bash
-node dist/apps/cli/src/index.js message:send \
-  --session utama \
-  --to 6281234567890 \
-  --text "Pesan pengujian opensrc_wa" \
-  --idempotency example-00001
-```
-
-## WebSocket dan webhook
-
-WebSocket:
-
-```text
-ws://localhost:3000/api/v1/events?api_key=API_KEY
-```
-
-Webhook signature:
-
-```text
-HMAC_SHA256(secret, timestamp + "." + delivery_id + "." + event + "." + raw_body)
-```
-
-Lihat `docs/WEBHOOKS.md`.
-
-## Persistence
-
-```env
-OPEN_SRC_WA_STORE=encrypted-file
-```
-
-atau:
-
-```env
-OPEN_SRC_WA_STORE=sqlite
-```
-
-Encrypted file store menggunakan AES-256-GCM dan atomic rename. SQLite menggunakan WAL dan transaksi. Adapter MySQL, MariaDB, dan PostgreSQL tetap berupa contract sampai driver produksi dipilih.
-
-## Docker
-
-```bash
-docker compose config
-docker compose build
-docker compose up -d
-```
-
-## Keamanan dan responsible use
-
-Gunakan hanya untuk akun/perangkat sendiri, penerima yang menyetujui, komunikasi internal sah, dan penelitian interoperabilitas yang mematuhi hukum. Proyek tidak menerima spam, scraping nomor, account farming, anti-ban, ban evasion, CAPTCHA bypass, fingerprint spoofing, session hijacking, credential theft, atau pengiriman tanpa izin.
-
-Baca `SECURITY.md`, `docs/SECURITY_MODEL.md`, `docs/THREAT_MODEL.md`, dan `docs/RESPONSIBLE_USE.md`.
+Keterbatasan yang masih harus diuji langsung per versi provider dicatat pada `docs/LIVE_PROVIDER_STATUS.md`.
 
 ## Dokumentasi
 
+- `AUDIT.md`
+- `docs/ARCHITECTURE.md`
+- `docs/adr/0001-multi-provider-baileys.md`
 - `docs/API.md`
-- `docs/FEATURE_PARITY.md`
-- `docs/MOCK_RUNTIME.md`
-- `docs/PROTOCOL_STATUS.md`
-- `docs/SDK.md`
-- `docs/PLUGINS.md`
-- `docs/DASHBOARD.md`
-- `docs/HISTORY.md`
-- `docs/ROADMAP.md`
+- `docs/LIVE_PROVIDER_STATUS.md`
+- `docs/DEPENDENCY_POLICY.md`
+- `docs/RESPONSIBLE_USE.md`
+- `docs/SECURITY_MODEL.md`
+- `docs/THREAT_MODEL.md`
+- `docs/TESTING.md`
 
 ## Lisensi
 
-Apache License 2.0. Lihat `LICENSE`.
+Kode `opensrc_wa` menggunakan Apache License 2.0. Baileys merupakan dependency terpisah dengan lisensi MIT. Lihat notice dan lisensi masing-masing dependency.
