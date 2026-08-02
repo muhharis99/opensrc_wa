@@ -10,13 +10,13 @@
 - Delete semantics: delete-for-me and delete-for-everyone use separate provider operations.
 - Live dashboard: implemented on `/dashboard`.
 - Auth persistence: multi-file and SQLite provider auth modes are implemented.
-- Session ownership: SQLite lease with TTL and owner token is implemented for processes sharing the same database on one host.
+- Session ownership: SQLite lease is available for one host; Redis distributed lease with owner token, TTL, atomic renew, and atomic release is available for multi-host deployments.
 - Outbound delivery: bounded queue with per-session and per-chat pacing is implemented.
 - Media: Base64 compatibility and streaming object-store persistence are implemented.
-- Automated validation: 40 tests, strict type-check, documentation/dependency/license checks, production build, Docker Compose validation, and Docker image build passed on GitHub-hosted Ubuntu.
+- Automated validation: 41 tests, strict type-check, documentation/dependency/license checks, production build, Docker Compose validation, and Docker image build passed on GitHub-hosted Ubuntu.
 - Live E2E: harness is implemented but no live result is claimed because this environment has no user-owned WhatsApp account/device pairing.
 - Native WebSocket/Noise/Signal: provider contract and research gates are implemented; live connectivity remains `BLOCKED`.
-- Distributed multi-node production status: requires a centralized database/lease adapter, durable broker, and external object storage before horizontal scaling.
+- Horizontal scale still requires centralized auth storage, durable broker, external object storage, monitoring, and appropriate fencing/idempotency at downstream resources.
 - Validation evidence: `docs/VALIDATION_V040.md`.
 
 ## v0.3.0
