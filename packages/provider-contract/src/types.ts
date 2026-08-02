@@ -24,14 +24,33 @@ export interface ProviderMediaSource {
   fileName?: string;
 }
 
+export interface ProviderButton {
+  id: string;
+  text: string;
+}
+
+export interface ProviderListRow {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface ProviderListSection {
+  title?: string;
+  rows: ProviderListRow[];
+}
+
 export type ProviderSendRequest =
   | { kind: "text"; to: string; text: string; mentions?: string[]; quoted?: unknown }
   | { kind: "image" | "video" | "audio" | "document" | "sticker"; to: string; media: ProviderMediaSource; caption?: string; voiceNote?: boolean; gifPlayback?: boolean; quoted?: unknown }
   | { kind: "location"; to: string; latitude: number; longitude: number; name?: string; address?: string; quoted?: unknown }
   | { kind: "contact"; to: string; displayName: string; vcard: string; quoted?: unknown }
   | { kind: "poll"; to: string; question: string; options: string[]; selectableCount?: number; quoted?: unknown }
+  | { kind: "buttons"; to: string; text: string; footer?: string; buttons: ProviderButton[]; quoted?: unknown }
+  | { kind: "list"; to: string; title?: string; text: string; footer?: string; buttonText: string; sections: ProviderListSection[]; quoted?: unknown }
+  | { kind: "broadcast"; to: string; text: string; statusJidList?: string[]; backgroundColor?: string; font?: number }
   | { kind: "reaction"; to: string; key: ProviderMessageKey; emoji: string }
-  | { kind: "delete"; to: string; key: ProviderMessageKey }
+  | { kind: "delete"; to: string; key: ProviderMessageKey; scope: "me" | "everyone"; timestamp?: number; deleteMedia?: boolean }
   | { kind: "edit"; to: string; key: ProviderMessageKey; text: string }
   | { kind: "forward"; to: string; message: unknown };
 
@@ -78,9 +97,11 @@ export interface WhatsAppProvider {
   logout(): Promise<void>;
   send(request: ProviderSendRequest): Promise<ProviderSendResult>;
   downloadMedia(message: unknown): Promise<Uint8Array>;
+  downloadMediaStream(message: unknown): Promise<AsyncIterable<Uint8Array>>;
   getContacts(): Promise<unknown[]>;
   getChats(): Promise<unknown[]>;
   checkNumbers(numbers: string[]): Promise<unknown[]>;
+  getBroadcastListInfo(jid: string): Promise<unknown>;
   setPresence(state: "available" | "unavailable" | "composing" | "recording" | "paused", jid?: string): Promise<void>;
   createGroup(input: ProviderGroupCreateInput): Promise<unknown>;
   updateGroupParticipants(groupJid: string, participants: string[], action: "add" | "remove" | "promote" | "demote"): Promise<unknown>;
