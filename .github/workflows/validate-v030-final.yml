@@ -1,0 +1,50 @@
+name: Validate opensrc_wa v0.3.0 final
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: validate-opensrc-wa-v030-final
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event.issue.user.login == github.repository_owner && github.event.issue.title == 'validate opensrc_wa v0.3.0 final'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          npm install --global typescript@5.8.3
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate source
+        run: pnpm validate
+
+      - name: Build source
+        run: pnpm build
+
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
+
+      - name: Build Docker image
+        run: docker build --tag opensrc-wa:v0.3.0 .
+
+      - name: Close trigger issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue close "${{ github.event.issue.number }}" --comment "Final validation passed: locked install, source validation, 32 tests, TypeScript build, Docker Compose validation, and Docker image build."
