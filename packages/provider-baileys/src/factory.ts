@@ -1,11 +1,16 @@
+import type { SessionLeaseLock } from "../../provider-contract/src/lease-lock";
 import type { ProviderFactory, WhatsAppProvider } from "../../provider-contract/src/types";
 import { BaileysProvider } from "./baileys-provider";
 import type { BaileysModuleLoader } from "./module-loader";
 
 export interface BaileysProviderFactoryOptions {
   authRootDir: string;
+  authStore?: "multi-file" | "sqlite";
+  authDatabasePath?: string;
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
+  sessionLeaseLock?: SessionLeaseLock;
+  sessionLeaseTtlMs?: number;
   moduleLoader?: BaileysModuleLoader;
 }
 
