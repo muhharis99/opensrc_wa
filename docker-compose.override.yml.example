@@ -1,0 +1,7 @@
+services:
+  gateway:
+    environment:
+      NODE_ENV: development
+      OPEN_SRC_WA_PROTOCOL_MODE: mock
+    ports:
+      - "3000:3000"

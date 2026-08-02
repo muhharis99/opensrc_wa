@@ -1,0 +1,9 @@
+{
+  "name": "@opensrc-wa/cli",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "bin": {
+    "opensrc-wa": "../../dist/apps/cli/src/index.js"
+  }
+}

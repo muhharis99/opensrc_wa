@@ -1,0 +1,33 @@
+@baseUrl = http://localhost:3000
+@apiKey = replace-me
+
+GET {{baseUrl}}/health
+
+### Create session
+POST {{baseUrl}}/api/v1/sessions
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "session_id": "utama"
+}
+
+### Connect mock session
+POST {{baseUrl}}/api/v1/sessions/utama/connect
+X-API-Key: {{apiKey}}
+
+### Complete mock pairing
+POST {{baseUrl}}/api/v1/sessions/utama/mock-complete-pairing
+X-API-Key: {{apiKey}}
+
+### Send mock text
+POST {{baseUrl}}/api/v1/messages/text
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "session_id": "utama",
+  "to": "6281234567890",
+  "text": "Pesan fixture opensrc_wa",
+  "idempotency_key": "example-00001"
+}
