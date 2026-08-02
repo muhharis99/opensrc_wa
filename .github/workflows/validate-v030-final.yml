@@ -9,7 +9,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: validate-opensrc-wa-v030-final
+  group: validate-opensrc-wa-v030-final-retry
   cancel-in-progress: false
 
 jobs:
@@ -29,20 +29,31 @@ jobs:
           corepack prepare pnpm@10.14.0 --activate
           npm install --global typescript@5.8.3
 
-      - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Validate source
-        run: pnpm validate
-
-      - name: Build source
-        run: pnpm build
-
-      - name: Validate Docker Compose
-        run: docker compose config --quiet
-
-      - name: Build Docker image
-        run: docker build --tag opensrc-wa:v0.3.0 .
+      - name: Run final validation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          {
+            pnpm install --frozen-lockfile
+            pnpm validate
+            pnpm build
+            cp .env.example .env
+            docker compose config --quiet
+            docker build --tag opensrc-wa:v0.3.0 .
+          } 2>&1 | tee /tmp/final-validation.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo 'Final validation failed. Last 160 log lines:'
+              echo '```text'
+              tail -n 160 /tmp/final-validation.log
+              echo '```'
+            } > /tmp/comment.md
+            gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/comment.md
+            exit "$status"
+          fi
 
       - name: Close trigger issue
         env:
