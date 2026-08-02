@@ -31,6 +31,8 @@ export function loadLiveGatewayConfig(env: Record<string, string | undefined> = 
   if (webhookSecret && webhookSecret.length < 24) throw new Error("OPEN_SRC_WA_LIVE_WEBHOOK_SECRET must contain at least 24 characters");
   const runtimeRoot = path.resolve(env.OPEN_SRC_WA_DATA_DIR ?? "./runtime");
   const authStore = env.OPEN_SRC_WA_BAILEYS_AUTH_STORE === "sqlite" ? "sqlite" : "multi-file";
+  const redisLeaseUrl = clean(env.OPEN_SRC_WA_SESSION_LEASE_REDIS_URL);
+  if (redisLeaseUrl && !/^rediss?:\/\//i.test(redisLeaseUrl)) throw new Error("OPEN_SRC_WA_SESSION_LEASE_REDIS_URL must use redis:// or rediss://");
   return {
     host: env.LIVE_HOST ?? env.HOST ?? "0.0.0.0",
     port: parseInteger(env.LIVE_PORT, 3001, 1, 65_535),
@@ -38,7 +40,7 @@ export function loadLiveGatewayConfig(env: Record<string, string | undefined> = 
     authRootDir: path.resolve(env.OPEN_SRC_WA_BAILEYS_AUTH_DIR ?? path.join(runtimeRoot, "baileys-auth")),
     authStore,
     authDatabasePath: path.resolve(env.OPEN_SRC_WA_BAILEYS_AUTH_DATABASE ?? path.join(runtimeRoot, "baileys-auth.sqlite")),
-    leaseDatabasePath: path.resolve(env.OPEN_SRC_WA_SESSION_LEASE_DATABASE ?? path.join(runtimeRoot, "session-leases.sqlite")),
+    leaseDatabasePath: redisLeaseUrl ?? path.resolve(env.OPEN_SRC_WA_SESSION_LEASE_DATABASE ?? path.join(runtimeRoot, "session-leases.sqlite")),
     leaseTtlMs: parseInteger(env.OPEN_SRC_WA_SESSION_LEASE_TTL_MS, 30_000, 5_000, 300_000),
     outboundSessionIntervalMs: parseInteger(env.OPEN_SRC_WA_OUTBOUND_SESSION_INTERVAL_MS, 750, 0, 60_000),
     outboundChatIntervalMs: parseInteger(env.OPEN_SRC_WA_OUTBOUND_CHAT_INTERVAL_MS, 1_250, 0, 60_000),
