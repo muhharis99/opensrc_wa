@@ -1,4 +1,6 @@
 import path = require("node:path");
+import type { SessionLeaseHandle, SessionLeaseLock } from "../../provider-contract/src/lease-lock";
+import { NoopSessionLeaseLock } from "../../provider-contract/src/lease-lock";
 import type {
   ProviderConnectOptions,
   ProviderEvent,
@@ -10,12 +12,17 @@ import type {
 } from "../../provider-contract/src/types";
 import type { BaileysModule, BaileysModuleLoader } from "./module-loader";
 import { loadBaileysModule } from "./module-loader";
+import { useSqliteAuthState } from "./sqlite-auth-state";
 
 export interface BaileysProviderOptions {
   sessionId: string;
   authRootDir: string;
+  authStore?: "multi-file" | "sqlite";
+  authDatabasePath?: string;
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
+  sessionLeaseLock?: SessionLeaseLock;
+  sessionLeaseTtlMs?: number;
   moduleLoader?: BaileysModuleLoader;
 }
 
@@ -24,12 +31,19 @@ export class BaileysProvider implements WhatsAppProvider {
   public readonly sessionId: string;
   private readonly listeners = new Set<ProviderEventListener>();
   private readonly authDirectory: string;
+  private readonly authStore: "multi-file" | "sqlite";
+  private readonly authDatabasePath: string;
   private readonly reconnectBaseDelayMs: number;
   private readonly reconnectMaxDelayMs: number;
+  private readonly sessionLeaseLock: SessionLeaseLock;
+  private readonly sessionLeaseTtlMs: number;
   private readonly moduleLoader: BaileysModuleLoader;
   private baileys: BaileysModule | null = null;
   private socket: any = null;
   private saveCreds: (() => Promise<void>) | null = null;
+  private closeAuthState: (() => void) | null = null;
+  private leaseHandle: SessionLeaseHandle | null = null;
+  private leaseRenewTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionallyClosed = false;
@@ -40,8 +54,12 @@ export class BaileysProvider implements WhatsAppProvider {
   public constructor(options: BaileysProviderOptions) {
     this.sessionId = options.sessionId;
     this.authDirectory = path.resolve(options.authRootDir, safeSegment(options.sessionId));
+    this.authStore = options.authStore ?? "multi-file";
+    this.authDatabasePath = path.resolve(options.authDatabasePath ?? path.join(options.authRootDir, "provider-auth.sqlite"));
     this.reconnectBaseDelayMs = options.reconnectBaseDelayMs ?? 1_000;
     this.reconnectMaxDelayMs = options.reconnectMaxDelayMs ?? 30_000;
+    this.sessionLeaseLock = options.sessionLeaseLock ?? new NoopSessionLeaseLock();
+    this.sessionLeaseTtlMs = options.sessionLeaseTtlMs ?? 30_000;
     this.moduleLoader = options.moduleLoader ?? loadBaileysModule;
   }
 
@@ -49,11 +67,18 @@ export class BaileysProvider implements WhatsAppProvider {
     this.connectOptions = { ...options };
     this.intentionallyClosed = false;
     this.clearReconnectTimer();
+    await this.ensureLease();
     await this.emit({ type: "connection.update", sessionId: this.sessionId, state: "connecting" });
 
     const baileys = await this.getBaileys();
-    const { state, saveCreds } = await baileys.useMultiFileAuthState(this.authDirectory);
-    this.saveCreds = saveCreds;
+    this.closeAuthState?.();
+    this.closeAuthState = null;
+    const auth = this.authStore === "sqlite"
+      ? await useSqliteAuthState(baileys, this.authDatabasePath, this.sessionId)
+      : await baileys.useMultiFileAuthState(this.authDirectory);
+    this.saveCreds = auth.saveCreds;
+    this.closeAuthState = "close" in auth && typeof auth.close === "function" ? auth.close : null;
+
     const makeWASocket = baileys.default ?? baileys.makeWASocket;
     if (typeof makeWASocket !== "function") throw new Error("Baileys module does not expose makeWASocket");
 
@@ -63,7 +88,7 @@ export class BaileysProvider implements WhatsAppProvider {
       : null;
 
     const socket = makeWASocket({
-      auth: state,
+      auth: auth.state,
       browser,
       logger: silentLogger(),
       printQRInTerminal: false,
@@ -74,9 +99,7 @@ export class BaileysProvider implements WhatsAppProvider {
     this.socket = socket;
     this.bindEvents(socket, baileys);
 
-    if (options.phone && !socket.authState?.creds?.registered) {
-      await this.requestPairingCode(options.phone);
-    }
+    if (options.phone && !socket.authState?.creds?.registered) await this.requestPairingCode(options.phone);
   }
 
   public async requestPairingCode(phone: string): Promise<string> {
@@ -95,6 +118,7 @@ export class BaileysProvider implements WhatsAppProvider {
     this.socket = null;
     if (socket?.ws?.close) socket.ws.close();
     else if (socket?.end) socket.end(new Error("opensrc_wa provider disconnected"));
+    await this.releaseResources();
     await this.emit({ type: "connection.update", sessionId: this.sessionId, state: "disconnected", reason: "manual_disconnect", retryable: false });
   }
 
@@ -104,33 +128,77 @@ export class BaileysProvider implements WhatsAppProvider {
     const socket = this.requireSocket();
     if (typeof socket.logout === "function") await socket.logout();
     this.socket = null;
+    await this.releaseResources();
     await this.emit({ type: "connection.update", sessionId: this.sessionId, state: "logged_out", reason: "logout", retryable: false });
   }
 
   public async send(request: ProviderSendRequest): Promise<ProviderSendResult> {
+    if (request.kind === "buttons" || request.kind === "list") return this.sendInteractive(request);
     const socket = this.requireSocket();
+    if (request.kind === "delete" && request.scope === "me") {
+      if (!request.timestamp || !Number.isFinite(request.timestamp)) throw new Error("timestamp wajib untuk delete-for-me");
+      await socket.chatModify({
+        deleteForMe: {
+          key: request.key,
+          timestamp: request.timestamp,
+          deleteMedia: request.deleteMedia ?? false
+        }
+      }, request.to);
+      return { messageId: request.key.id, remoteJid: request.to, raw: { scope: "me" } };
+    }
+
     const content = await this.toBaileysContent(request);
-    const options = "quoted" in request && request.quoted ? { quoted: request.quoted } : undefined;
-    const result = await socket.sendMessage(request.to, content, options);
+    const options: Record<string, unknown> = {};
+    if ("quoted" in request && request.quoted) options.quoted = request.quoted;
+    if (request.kind === "broadcast") {
+      options.broadcast = true;
+      if (request.statusJidList?.length) options.statusJidList = request.statusJidList;
+      if (request.backgroundColor) options.backgroundColor = request.backgroundColor;
+      if (request.font !== undefined) options.font = request.font;
+    }
+    const result = await socket.sendMessage(request.to, content, Object.keys(options).length ? options : undefined);
     const messageId = result?.key?.id;
     const remoteJid = result?.key?.remoteJid ?? request.to;
     if (!messageId) throw new Error("Provider did not return a message id");
     return { messageId, remoteJid, raw: result };
   }
 
-  public async downloadMedia(message: unknown): Promise<Uint8Array> {
+  public async downloadMediaStream(message: unknown): Promise<AsyncIterable<Uint8Array>> {
     const baileys = await this.getBaileys();
     if (typeof baileys.downloadMediaMessage !== "function") throw new Error("downloadMediaMessage is unavailable");
-    const data = await baileys.downloadMediaMessage(message, "buffer", {}, { logger: silentLogger(), reuploadRequest: this.requireSocket().updateMediaMessage });
-    return new Uint8Array(data);
+    const stream = await baileys.downloadMediaMessage(message, "stream", {}, {
+      logger: silentLogger(),
+      reuploadRequest: this.requireSocket().updateMediaMessage
+    });
+    return stream as AsyncIterable<Uint8Array>;
+  }
+
+  public async downloadMedia(message: unknown): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for await (const chunk of await this.downloadMediaStream(message)) {
+      const bytes = new Uint8Array(chunk);
+      size += bytes.byteLength;
+      chunks.push(bytes);
+    }
+    const output = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }
+    return output;
   }
 
   public async getContacts(): Promise<unknown[]> { return [...this.contacts.values()]; }
   public async getChats(): Promise<unknown[]> { return [...this.chats.values()]; }
 
   public async checkNumbers(numbers: string[]): Promise<unknown[]> {
+    return this.requireSocket().onWhatsApp(...numbers.map(normalizePhone));
+  }
+
+  public async getBroadcastListInfo(jid: string): Promise<unknown> {
+    if (!/^\d+@broadcast$/.test(jid)) throw new Error("broadcast JID tidak valid");
     const socket = this.requireSocket();
-    return socket.onWhatsApp(...numbers.map(normalizePhone));
+    if (typeof socket.getBroadcastListInfo !== "function") throw new Error("Broadcast list info tidak didukung provider");
+    return socket.getBroadcastListInfo(jid);
   }
 
   public async setPresence(state: "available" | "unavailable" | "composing" | "recording" | "paused", jid?: string): Promise<void> {
@@ -145,45 +213,16 @@ export class BaileysProvider implements WhatsAppProvider {
     return this.requireSocket().groupParticipantsUpdate(groupJid, participants, action);
   }
 
-  public async updateGroupSubject(groupJid: string, subject: string): Promise<void> {
-    await this.requireSocket().groupUpdateSubject(groupJid, subject);
-  }
-
-  public async updateGroupDescription(groupJid: string, description: string): Promise<void> {
-    await this.requireSocket().groupUpdateDescription(groupJid, description);
-  }
-
-  public async updateGroupSetting(groupJid: string, setting: "announcement" | "not_announcement" | "locked" | "unlocked"): Promise<void> {
-    await this.requireSocket().groupSettingUpdate(groupJid, setting);
-  }
-
-  public async getGroupInviteCode(groupJid: string): Promise<string> {
-    return this.requireSocket().groupInviteCode(groupJid);
-  }
-
-  public async revokeGroupInvite(groupJid: string): Promise<string> {
-    return this.requireSocket().groupRevokeInvite(groupJid);
-  }
-
-  public async acceptGroupInvite(code: string): Promise<string> {
-    return this.requireSocket().groupAcceptInvite(code);
-  }
-
-  public async blockContact(jid: string, action: "block" | "unblock"): Promise<void> {
-    await this.requireSocket().updateBlockStatus(jid, action);
-  }
-
-  public async updateProfileName(name: string): Promise<void> {
-    await this.requireSocket().updateProfileName(name);
-  }
-
-  public async updateProfileStatus(status: string): Promise<void> {
-    await this.requireSocket().updateProfileStatus(status);
-  }
-
-  public async updateProfilePicture(jid: string, image: Uint8Array): Promise<void> {
-    await this.requireSocket().updateProfilePicture(jid, image);
-  }
+  public async updateGroupSubject(groupJid: string, subject: string): Promise<void> { await this.requireSocket().groupUpdateSubject(groupJid, subject); }
+  public async updateGroupDescription(groupJid: string, description: string): Promise<void> { await this.requireSocket().groupUpdateDescription(groupJid, description); }
+  public async updateGroupSetting(groupJid: string, setting: "announcement" | "not_announcement" | "locked" | "unlocked"): Promise<void> { await this.requireSocket().groupSettingUpdate(groupJid, setting); }
+  public async getGroupInviteCode(groupJid: string): Promise<string> { return this.requireSocket().groupInviteCode(groupJid); }
+  public async revokeGroupInvite(groupJid: string): Promise<string> { return this.requireSocket().groupRevokeInvite(groupJid); }
+  public async acceptGroupInvite(code: string): Promise<string> { return this.requireSocket().groupAcceptInvite(code); }
+  public async blockContact(jid: string, action: "block" | "unblock"): Promise<void> { await this.requireSocket().updateBlockStatus(jid, action); }
+  public async updateProfileName(name: string): Promise<void> { await this.requireSocket().updateProfileName(name); }
+  public async updateProfileStatus(status: string): Promise<void> { await this.requireSocket().updateProfileStatus(status); }
+  public async updateProfilePicture(jid: string, image: Uint8Array): Promise<void> { await this.requireSocket().updateProfilePicture(jid, image); }
 
   public onEvent(listener: ProviderEventListener): () => void {
     this.listeners.add(listener);
@@ -210,15 +249,19 @@ export class BaileysProvider implements WhatsAppProvider {
         await this.emit({ type: "connection.update", sessionId: this.sessionId, state: "connected" });
       }
       if (update.connection === "close") {
+        this.socket = null;
         const statusCode = disconnectStatusCode(update.lastDisconnect?.error);
         const loggedOut = statusCode === baileys.DisconnectReason?.loggedOut;
         const conflict = statusCode === baileys.DisconnectReason?.connectionReplaced;
-        if (loggedOut) {
-          await this.emit({ type: "connection.update", sessionId: this.sessionId, state: "logged_out", reason: String(statusCode), retryable: false });
-          return;
-        }
-        if (conflict) {
-          await this.emit({ type: "connection.update", sessionId: this.sessionId, state: "conflict", reason: String(statusCode), retryable: false });
+        if (loggedOut || conflict) {
+          await this.releaseResources();
+          await this.emit({
+            type: "connection.update",
+            sessionId: this.sessionId,
+            state: loggedOut ? "logged_out" : "conflict",
+            reason: String(statusCode),
+            retryable: false
+          });
           return;
         }
         await this.emit({ type: "connection.update", sessionId: this.sessionId, state: "disconnected", reason: String(statusCode ?? "unknown"), retryable: !this.intentionallyClosed });
@@ -238,7 +281,7 @@ export class BaileysProvider implements WhatsAppProvider {
       await this.emit({ type: "contacts.updated", sessionId: this.sessionId, update: items });
     });
     socket.ev.on("contacts.update", async (items: any[]) => {
-      for (const item of items ?? []) if (item?.id) this.contacts.set(item.id, { ...(this.contacts.get(item.id) as object ?? {}), ...item });
+      for (const item of items ?? []) if (item?.id) this.contacts.set(item.id, { ...((this.contacts.get(item.id) as object | undefined) ?? {}), ...item });
       await this.emit({ type: "contacts.updated", sessionId: this.sessionId, update: items });
     });
     socket.ev.on("chats.upsert", async (items: any[]) => {
@@ -246,14 +289,53 @@ export class BaileysProvider implements WhatsAppProvider {
       await this.emit({ type: "chats.updated", sessionId: this.sessionId, update: items });
     });
     socket.ev.on("chats.update", async (items: any[]) => {
-      for (const item of items ?? []) if (item?.id) this.chats.set(item.id, { ...(this.chats.get(item.id) as object ?? {}), ...item });
+      for (const item of items ?? []) if (item?.id) this.chats.set(item.id, { ...((this.chats.get(item.id) as object | undefined) ?? {}), ...item });
       await this.emit({ type: "chats.updated", sessionId: this.sessionId, update: items });
     });
     socket.ev.on("call", async (update: unknown) => this.emit({ type: "call.updated", sessionId: this.sessionId, update }));
     socket.ev.on("messaging-history.set", async (update: unknown) => this.emit({ type: "history.synced", sessionId: this.sessionId, update }));
   }
 
-  private async toBaileysContent(request: ProviderSendRequest): Promise<Record<string, unknown>> {
+  private async sendInteractive(request: Extract<ProviderSendRequest, { kind: "buttons" | "list" }>): Promise<ProviderSendResult> {
+    const socket = this.requireSocket();
+    const baileys = await this.getBaileys();
+    if (!baileys.proto?.Message?.fromObject || typeof baileys.generateWAMessageFromContent !== "function" || typeof socket.relayMessage !== "function") {
+      throw new Error("Interactive message API tidak tersedia pada provider version ini");
+    }
+    const body = request.kind === "buttons"
+      ? {
+          buttonsMessage: {
+            contentText: request.text,
+            footerText: request.footer ?? "",
+            headerType: 1,
+            buttons: request.buttons.map((button) => ({ buttonId: button.id, buttonText: { displayText: button.text }, type: 1 }))
+          }
+        }
+      : {
+          listMessage: {
+            title: request.title ?? "",
+            description: request.text,
+            footerText: request.footer ?? "",
+            buttonText: request.buttonText,
+            listType: 1,
+            sections: request.sections.map((section) => ({
+              title: section.title ?? "",
+              rows: section.rows.map((row) => ({ rowId: row.id, title: row.title, description: row.description ?? "" }))
+            }))
+          }
+        };
+    const generated = baileys.generateWAMessageFromContent(
+      request.to,
+      baileys.proto.Message.fromObject(body),
+      { userJid: socket.user?.id, ...(request.quoted ? { quoted: request.quoted } : {}) }
+    );
+    const messageId = generated?.key?.id;
+    if (!messageId) throw new Error("Provider gagal membuat message id interaktif");
+    await socket.relayMessage(request.to, generated.message, { messageId });
+    return { messageId, remoteJid: request.to, raw: generated };
+  }
+
+  private async toBaileysContent(request: Exclude<ProviderSendRequest, { kind: "buttons" | "list" }>): Promise<Record<string, unknown>> {
     switch (request.kind) {
       case "text": return { text: request.text, ...(request.mentions?.length ? { mentions: request.mentions } : {}) };
       case "image": return { image: mediaValue(request.media), caption: request.caption ?? "" };
@@ -264,12 +346,34 @@ export class BaileysProvider implements WhatsAppProvider {
       case "location": return { location: { degreesLatitude: request.latitude, degreesLongitude: request.longitude, name: request.name, address: request.address } };
       case "contact": return { contacts: { displayName: request.displayName, contacts: [{ vcard: request.vcard }] } };
       case "poll": return { poll: { name: request.question, values: request.options, selectableCount: request.selectableCount ?? 1 } };
+      case "broadcast": return { text: request.text };
       case "reaction": return { react: { text: request.emoji, key: request.key } };
       case "delete": return { delete: request.key };
       case "edit": return { text: request.text, edit: request.key };
       case "forward": return { forward: request.message };
       default: return assertNever(request);
     }
+  }
+
+  private async ensureLease(): Promise<void> {
+    if (this.leaseHandle) return;
+    this.leaseHandle = await this.sessionLeaseLock.acquire(this.sessionId, this.sessionLeaseTtlMs);
+    const intervalMs = Math.max(2_000, Math.floor(this.sessionLeaseTtlMs / 3));
+    this.leaseRenewTimer = setInterval(() => {
+      void this.leaseHandle?.renew().catch((error) => this.emit({ type: "provider.error", sessionId: this.sessionId, operation: "lease.renew", error }));
+    }, intervalMs);
+    (this.leaseRenewTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  private async releaseResources(): Promise<void> {
+    if (this.leaseRenewTimer) clearInterval(this.leaseRenewTimer);
+    this.leaseRenewTimer = null;
+    const lease = this.leaseHandle;
+    this.leaseHandle = null;
+    await lease?.release().catch(() => undefined);
+    this.closeAuthState?.();
+    this.closeAuthState = null;
+    this.saveCreds = null;
   }
 
   private async getBaileys(): Promise<BaileysModule> {
