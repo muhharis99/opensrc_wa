@@ -1,0 +1,75 @@
+name: Refresh provider lockfile
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: refresh-provider-lock-v030
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.event.issue.user.login == github.repository_owner && github.event.issue.title == 'refresh provider lockfile v0.3.0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          pnpm --version
+
+      - name: Generate and verify lockfile
+        run: |
+          pnpm install --lockfile-only --no-frozen-lockfile
+          pnpm install --frozen-lockfile
+          npm install --global typescript@5.8.3
+
+      - name: Validate repository
+        id: validate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          pnpm validate 2>&1 | tee /tmp/validate.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo 'Validation failed. Last 120 log lines:'
+              echo '```text'
+              tail -n 120 /tmp/validate.log
+              echo '```'
+            } > /tmp/comment.md
+            gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/comment.md
+            exit "$status"
+          fi
+
+      - name: Commit lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            echo "Lockfile already current."
+          else
+            git commit -m "build: lock Baileys provider dependency"
+            git push origin HEAD:main
+          fi
+
+      - name: Close trigger issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue close "${{ github.event.issue.number }}" --comment "Baileys lockfile generated and repository validation passed."
