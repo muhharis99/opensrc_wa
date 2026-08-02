@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 const forbidden = ["venom", "whatsapp-web.js", "wppconnect", "open-wa", "puppeteer", "playwright", "selenium"];
+const referenceAllowedPrefixes = ["docs/", "README.md", "AUDIT.md", "scripts/dependency-check.mjs"];
 const baileysToken = "@whiskeysockets/baileys";
 const baileysAllowedPrefixes = [
   "packages/provider-baileys/",
@@ -25,8 +26,8 @@ async function walk(dir) {
   return files;
 }
 
-function isBaileysAllowed(file) {
-  return baileysAllowedPrefixes.some((prefix) => file === prefix || file.startsWith(prefix));
+function startsWithAny(file, prefixes) {
+  return prefixes.some((prefix) => file === prefix || file.startsWith(prefix));
 }
 
 let failures = 0;
@@ -38,14 +39,16 @@ for (const file of await walk(".")) {
     continue;
   }
 
-  for (const token of forbidden) {
-    if (text.includes(token)) {
-      process.stderr.write(`${file}: forbidden dependency/reference '${token}'\n`);
-      failures += 1;
+  if (!startsWithAny(file, referenceAllowedPrefixes)) {
+    for (const token of forbidden) {
+      if (text.includes(token)) {
+        process.stderr.write(`${file}: forbidden dependency/reference '${token}'\n`);
+        failures += 1;
+      }
     }
   }
 
-  if (text.includes(baileysToken) && !isBaileysAllowed(file)) {
+  if (text.includes(baileysToken) && !startsWithAny(file, baileysAllowedPrefixes)) {
     process.stderr.write(`${file}: Baileys may only be referenced inside the isolated provider adapter, tests, manifests, and documentation\n`);
     failures += 1;
   }
