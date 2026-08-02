@@ -13,11 +13,16 @@ const required = [
 for (const file of required) await access(file);
 
 const readme = (await readFile("README.md", "utf8")).toLowerCase();
-const hasDisclaimer = readme.includes("tidak berafiliasi") && readme.includes("unofficial");
-const hasHonestStatus = readme.includes("belum") && readme.includes("live e2e") && readme.includes("risiko");
-const hasResponsibleUse = readme.includes("spam") && readme.includes("persetujuan");
-const hasProviderBoundary = readme.includes("whatsappprovider") && readme.includes("baileysprovider");
+const requiredPhrases = [
+  "tidak berafiliasi",
+  "unofficial software",
+  "jangan gunakan proyek ini untuk spam",
+  "live e2e dinonaktifkan",
+  "whatsappprovider",
+  "baileysprovider"
+];
 
-if (!hasDisclaimer || !hasHonestStatus || !hasResponsibleUse || !hasProviderBoundary) {
-  throw new Error("README must contain affiliation disclaimer, honest live-test status, responsible-use warning, and provider boundary");
+const missing = requiredPhrases.filter((phrase) => !readme.includes(phrase));
+if (missing.length > 0) {
+  throw new Error(`README is missing required disclaimer/status phrases: ${missing.join(", ")}`);
 }
