@@ -1,0 +1,42 @@
+name: Diagnose CI audit
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  diagnose:
+    if: github.event.issue.user.login == github.repository_owner && github.event.issue.title == 'diagnose opensrc_wa ci audit'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Capture audit output
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          pnpm audit --audit-level high 2>&1 | tee /tmp/audit.log
+          status=${PIPESTATUS[0]}
+          {
+            echo "Audit exit code: ${status}"
+            echo '```text'
+            tail -n 240 /tmp/audit.log
+            echo '```'
+          } > /tmp/comment.md
+          gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/comment.md
+          gh issue close "${{ github.event.issue.number }}" --comment "Audit diagnosis completed."
+          exit 0
