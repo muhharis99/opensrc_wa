@@ -1,7 +1,11 @@
 export type BaileysModule = Record<string, any> & {
   default?: (...args: any[]) => any;
   makeWASocket?: (...args: any[]) => any;
-  useMultiFileAuthState: (directory: string) => Promise<{ state: any; saveCreds: () => Promise<void> }>;
+  useMultiFileAuthState: (directory: string) => Promise<{
+    state: any;
+    saveCreds: () => Promise<void>;
+    close?: () => void;
+  }>;
 };
 
 export type BaileysModuleLoader = () => Promise<BaileysModule>;
